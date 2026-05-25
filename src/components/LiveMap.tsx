@@ -24,6 +24,14 @@ interface ViewTarget {
   zoom: number;
 }
 
+interface RiskZone {
+  id: string;
+  Location: string;
+  Latitude: number;
+  Longitude: number;
+  Reason: string;
+}
+
 // Controller component to move/zoom map programmatically
 function MapController({ 
   viewTarget, 
@@ -102,6 +110,28 @@ const getHelplineForCountry = (country: string) => {
   }
 };
 
+// Haversine formula to compute distance between coordinates in km
+function getCoordinateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371; // Earth radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon / 2) * Math.sin(dLon / 2)
+  ; 
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); 
+  return R * c;
+}
+
+const GLOBAL_STORM_CELLS = [
+  { id: "storm-1", name: "NORTH ATLANTIC CYCLONE", lat: 53.5, lon: -35.0, radius: 450000, type: "Severe Turbulence / Heavy Rain" },
+  { id: "storm-2", name: "BAY OF BENGAL MONSOON CELL", lat: 14.2, lon: 86.5, radius: 350000, type: "Thunderstorms / Wind Shear" },
+  { id: "storm-3", name: "MIDWEST SUPERCELL COMPLEX", lat: 39.5, lon: -95.0, radius: 400000, type: "Hail / Severe Wind shear" },
+  { id: "storm-4", name: "TAIPEI TYPHOON FRONT", lat: 23.5, lon: 122.0, radius: 500000, type: "Typhoon Wind / Flash Flooding" },
+  { id: "storm-5", name: "ALPINE WIND CONVERGENCE", lat: 46.8, lon: 10.5, radius: 250000, type: "Mountain Wave Turbulence" }
+];
+
 export default function LiveMap() {
   const [flights, setFlights] = useState<Flight[]>([]);
   const [filteredFlights, setFilteredFlights] = useState<Flight[]>([]);
@@ -114,10 +144,21 @@ export default function LiveMap() {
   // Crash Simulation state
   const [simulating, setSimulating] = useState(false);
   const [simulationData, setSimulationData] = useState<any | null>(null);
+  const [activeSimulationTab, setActiveSimulationTab] = useState<"descent" | "sar">("descent");
 
   // Maritime Vessel state
   const [nearestVessel, setNearestVessel] = useState<any | null>(null);
   const [vesselLoading, setVesselLoading] = useState(false);
+
+  // Historical Risk Zones state
+  const [riskZones, setRiskZones] = useState<RiskZone[]>([]);
+  const [selectedRiskZone, setSelectedRiskZone] = useState<RiskZone | null>(null);
+
+  // Weather & Flight Path states
+  const [showWeatherLayer, setShowWeatherLayer] = useState(true);
+  const [selectedFlightWeather, setSelectedFlightWeather] = useState<any | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [selectedFlightPath, setSelectedFlightPath] = useState<[number, number][]>([]);
 
   // Live Warnings Feed state
   const [signalLossFeed, setSignalLossFeed] = useState<any[]>([
@@ -149,15 +190,19 @@ export default function LiveMap() {
   const iconCacheRef = useRef<Record<string, L.DivIcon>>({});
 
   // Get Custom rotating SVG airplane icon
-  const getAirplaneIcon = (icao24: string, heading: number, isSelected: boolean) => {
-    const cacheKey = `${icao24}-${heading}-${isSelected}`;
+  const getAirplaneIcon = (icao24: string, heading: number, isSelected: boolean, isAtRisk: boolean = false) => {
+    const cacheKey = `${icao24}-${heading}-${isSelected}-${isAtRisk}`;
     if (iconCacheRef.current[cacheKey]) {
       return iconCacheRef.current[cacheKey];
     }
 
-    const color = isSelected ? "#3b82f6" : "#cbd5e1";
-    const glow = isSelected ? "drop-shadow(0 0 6px rgba(59,130,246,0.9))" : "drop-shadow(0 0 2px rgba(0,0,0,0.5))";
-    const size = isSelected ? 28 : 22;
+    const color = isSelected ? "#ef4444" : isAtRisk ? "#f97316" : "#cbd5e1";
+    const glow = isSelected 
+      ? "drop-shadow(0 0 8px rgba(239,68,68,0.95))" 
+      : isAtRisk 
+      ? "drop-shadow(0 0 6px rgba(249,115,22,0.85))"
+      : "drop-shadow(0 0 2px rgba(0,0,0,0.5))";
+    const size = isSelected ? 28 : isAtRisk ? 25 : 22;
 
     const html = `
       <div style="transform: rotate(${heading}deg); width: ${size}px; height: ${size}px; filter: ${glow}; transition: transform 0.5s ease-out; display: flex; align-items: center; justify-content: center;">
@@ -181,8 +226,8 @@ export default function LiveMap() {
   // Custom icons for impact and drift
   const getShipIcon = (typeCode: number) => {
     const isRescue = typeCode === 51;
-    const color = isRescue ? "#10b981" : "#14b8a6"; // emerald for rescue, teal for other ships
-    const glow = isRescue ? "drop-shadow(0 0 6px rgba(16,185,129,0.9))" : "drop-shadow(0 0 4px rgba(20,184,166,0.6))";
+    const color = isRescue ? "#f59e0b" : "#d97706"; // emerald for rescue, teal for other ships
+    const glow = isRescue ? "drop-shadow(0 0 6px rgba(245,158,11,0.9))" : "drop-shadow(0 0 4px rgba(217,119,6,0.6))";
     
     return L.divIcon({
       html: `
@@ -227,6 +272,85 @@ export default function LiveMap() {
     });
   };
 
+  const getDriftIconForTime = (hours: number) => {
+    return L.divIcon({
+      html: `
+        <div style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; position: relative;">
+          <div style="position: absolute; width: 28px; height: 28px; border-radius: 50%; border: 1.5px dashed #f59e0b; animation: spin 20s linear infinite;"></div>
+          <span style="font-size: 9px; font-weight: bold; font-family: monospace; color: #fbbf24; background: #0c0303; border: 1px solid #d97706; padding: 2px 4px; border-radius: 3px; box-shadow: 0 0 5px rgba(251,191,36,0.8); z-index: 10;">+${hours}H</span>
+        </div>
+      `,
+      className: "custom-drift-step-icon",
+      iconSize: [32, 32],
+      iconAnchor: [16, 16]
+    });
+  };
+
+  const getRiskZoneIcon = (isSelected: boolean) => {
+    const color = isSelected ? "#ef4444" : "#f97316";
+    const glow = isSelected ? "drop-shadow(0 0 8px rgba(239,68,68,0.9))" : "drop-shadow(0 0 4px rgba(249,115,22,0.6))";
+    
+    return L.divIcon({
+      html: `
+        <div style="display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; filter: ${glow};">
+          <svg style="width: 100%; height: 100%; color: ${color};" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2L2 22h20L12 2zm1 14h-2v-2h2v2zm0-4h-2V8h2v4z"/>
+          </svg>
+        </div>
+      `,
+      className: "custom-risk-icon",
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+  };
+
+  const getStormIcon = () => {
+    return L.divIcon({
+      html: `
+        <div style="display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; animation: pulse 2s infinite;">
+          <svg style="width: 18px; height: 18px; color: #ea580c; filter: drop-shadow(0 0 4px rgba(234,88,12,0.8));" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19.36 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.64-4.96zM11.5 17v-3H9l4-6v3h2.5l-4 6z"/>
+          </svg>
+        </div>
+      `,
+      className: "custom-storm-icon",
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+  };
+
+  const generateSimulatedPath = (flight: Flight): [number, number][] => {
+    const path: [number, number][] = [];
+    const numPoints = 8;
+    const stepHours = 0.25; // 15 mins step
+    const speedKmh = flight.velocity || 800;
+    const headingRad = (flight.heading * Math.PI) / 180;
+    
+    // Reverse vector
+    const revLat = -Math.cos(headingRad);
+    const revLon = -Math.sin(headingRad);
+    
+    const latConversion = 111;
+    const lonConversion = 111 * Math.cos((flight.latitude * Math.PI) / 180);
+    
+    for (let i = numPoints; i >= 0; i--) {
+      const distance = (speedKmh * stepHours * i);
+      const dLat = (revLat * distance) / latConversion;
+      const dLon = (revLon * distance) / lonConversion;
+      
+      // Add slight curved wave for realistic look
+      const wobble = Math.sin(i * 0.8) * 0.15;
+      
+      path.push([
+        flight.latitude + dLat + wobble,
+        flight.longitude + dLon - (wobble * 0.5)
+      ]);
+    }
+    
+    path.push([flight.latitude, flight.longitude]);
+    return path;
+  };
+
   // Fetch flights from Next.js server API
   const fetchFlights = async (showLoader = false) => {
     if (showLoader) setLoading(true);
@@ -244,15 +368,69 @@ export default function LiveMap() {
     }
   };
 
-  // Initial fetch and 3-second polling interval
+  const fetchRiskZones = async () => {
+    try {
+      const response = await fetch("/api/risk-zones");
+      const data = await response.json();
+      if (data.success && data.data) {
+        setRiskZones(data.data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch historical risk zones:", error);
+    }
+  };
+
+  // Initial fetch and 90-second polling interval (to satisfy OpenSky rate limits)
   useEffect(() => {
     fetchFlights(true);
+    fetchRiskZones();
 
     const interval = setInterval(() => {
       fetchFlights(false);
-    }, 3000); // 3-second delay to prevent UI/network lag
+    }, 90000); // 90-second polling frequency
 
     return () => clearInterval(interval);
+  }, []);
+
+  // Client-side flight path extrapolation to keep map movement smooth while saving API limits
+  useEffect(() => {
+    const driftInterval = setInterval(() => {
+      setFlights((prevFlights) =>
+        prevFlights.map((flight) => {
+          if (flight.on_ground || !flight.velocity) return flight;
+          
+          // Speed in degrees per second (approx)
+          // velocity is in km/h. Convert to km/s: velocity / 3600
+          // 1 degree latitude ~ 111 km
+          const speedDegS = (flight.velocity / 3600) / 111;
+          const headingRad = (flight.heading * Math.PI) / 180;
+          
+          // Elapsed time is 3 seconds
+          const dLat = Math.cos(headingRad) * speedDegS * 3;
+          
+          // Calculate cosine of latitude safely to avoid division by zero near poles
+          const cosLat = Math.max(0.01, Math.cos((flight.latitude * Math.PI) / 180));
+          const dLon = (Math.sin(headingRad) * speedDegS * 3) / cosLat;
+          
+          // Constrain coordinates to standard map boundaries
+          let nextLat = flight.latitude + dLat;
+          let nextLon = flight.longitude + dLon;
+          
+          if (nextLat > 85) nextLat = 85;
+          if (nextLat < -85) nextLat = -85;
+          if (nextLon > 180) nextLon -= 360;
+          if (nextLon < -180) nextLon += 360;
+          
+          return {
+            ...flight,
+            latitude: nextLat,
+            longitude: nextLon
+          };
+        })
+      );
+    }, 3000);
+
+    return () => clearInterval(driftInterval);
   }, []);
   // Filter flights based on search query
   useEffect(() => {
@@ -308,6 +486,51 @@ export default function LiveMap() {
     fetchNearestVessel();
   }, [selectedFlight?.icao24]);
 
+  // Fetch flight weather from OpenWeather when selectedFlight changes
+  useEffect(() => {
+    if (!selectedFlight) {
+      setSelectedFlightWeather(null);
+      return;
+    }
+
+    const fetchWeather = async () => {
+      setWeatherLoading(true);
+      try {
+        const res = await fetch(`/api/weather?lat=${selectedFlight.latitude}&lon=${selectedFlight.longitude}`);
+        const data = await res.json();
+        if (data.success && data.weather) {
+          setSelectedFlightWeather(data.weather);
+        } else {
+          setSelectedFlightWeather(null);
+        }
+      } catch (err) {
+        console.error("Failed to fetch flight weather:", err);
+        setSelectedFlightWeather(null);
+      } finally {
+        setWeatherLoading(false);
+      }
+    };
+
+    fetchWeather();
+  }, [selectedFlight?.icao24]);
+
+  // Sync selectedFlightPath with coordinate updates
+  useEffect(() => {
+    if (!selectedFlight) {
+      setSelectedFlightPath([]);
+      return;
+    }
+
+    setSelectedFlightPath((prevPath) => {
+      if (prevPath.length === 0) return prevPath;
+      const lastPt = prevPath[prevPath.length - 1];
+      if (lastPt[0] !== selectedFlight.latitude || lastPt[1] !== selectedFlight.longitude) {
+        return [...prevPath, [selectedFlight.latitude, selectedFlight.longitude]];
+      }
+      return prevPath;
+    });
+  }, [selectedFlight?.latitude, selectedFlight?.longitude]);
+
   // Generate simulated signal loss alerts dynamically based on active flights list
   useEffect(() => {
     if (flights.length === 0) return;
@@ -349,6 +572,8 @@ export default function LiveMap() {
     if (filteredFlights.length > 0) {
       const match = filteredFlights[0];
       setSelectedFlight(match);
+      setSelectedRiskZone(null);
+      setSelectedFlightPath(generateSimulatedPath(match));
       setViewTarget({ center: [match.latitude, match.longitude], zoom: 6 });
     }
   };
@@ -408,64 +633,120 @@ export default function LiveMap() {
     }
   };
 
+  // Helper to check if a flight is currently inside or approaching any active weather cells (within radius + 150km buffer)
+  const isFlightAtRisk = (flight: Flight) => {
+    for (const cell of GLOBAL_STORM_CELLS) {
+      const dist = getCoordinateDistance(flight.latitude, flight.longitude, cell.lat, cell.lon);
+      if (dist < (cell.radius / 1000) + 150) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Calculate Weather Deviation Index (WDI) for the currently selected flight
+  let highestWdi = 0;
+  let activeStormCell: any = null;
+  
+  if (selectedFlight) {
+    for (const cell of GLOBAL_STORM_CELLS) {
+      const distance = getCoordinateDistance(
+        selectedFlight.latitude,
+        selectedFlight.longitude,
+        cell.lat,
+        cell.lon
+      );
+      const radiusKm = cell.radius / 1000;
+      if (distance < radiusKm + 180) {
+        const proximityRatio = Math.max(0, 1 - (distance / (radiusKm + 180)));
+        const wdiVal = Math.round(proximityRatio * 100);
+        if (wdiVal > highestWdi) {
+          highestWdi = wdiVal;
+          activeStormCell = {
+            ...cell,
+            distance: Math.round(distance)
+          };
+        }
+      }
+    }
+  }
+
   return (
-    <div className="relative w-full h-[calc(100vh-80px)] flex flex-row bg-[#02050d] overflow-hidden">
+    <div className="relative w-full h-full flex flex-row bg-[#050101] overflow-hidden font-sans">
       
       {/* Docked Left Control Panel Sidebar */}
-      <div className="w-80 border-r border-blue-950/60 bg-[#030712] p-4 flex flex-col justify-start gap-4 h-full overflow-y-auto shrink-0 z-10 select-none">
+      <div className="w-80 border-r border-red-950/60 bg-[#0c0303] p-4 flex flex-col justify-start gap-4 h-full overflow-y-auto shrink-0 z-10 select-none">
         
         {/* Title / Module Code */}
-        <div className="flex items-center gap-2 border-b border-blue-950/40 pb-3">
-          <Activity className="w-4 h-4 text-blue-500 animate-pulse" />
-          <span className="text-[10px] font-mono tracking-widest text-slate-400 font-bold uppercase">CONTROL_CONSOLE v1.08</span>
+        <div className="flex items-center gap-2 border-b border-red-950/40 pb-3">
+          <Activity className="w-4 h-4 text-red-400 animate-pulse" />
+          <span className="text-xs font-mono tracking-wider text-slate-300 font-bold uppercase">CONTROL_CONSOLE v1.08</span>
         </div>
 
         {/* Search Bar Panel */}
         <form
           onSubmit={handleSearchSubmit}
-          className="w-full flex items-center gap-2 p-2 rounded-xl border border-blue-950/60 bg-[#060b18]/50 shadow-inner"
+          className="w-full flex items-center gap-2 p-2.5 rounded-xl border border-red-950/60 bg-[#120202]/50 shadow-inner"
         >
           <div className="flex-1 flex items-center gap-2 px-2">
-            <Search className="w-4 h-4 text-slate-500" />
+            <Search className="w-4 h-4 text-slate-400" />
             <input
               type="text"
               placeholder="Search Callsign / ICAO..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-transparent border-none text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-0"
+              className="w-full bg-transparent border-none text-xs text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-0"
             />
           </div>
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery("")}
-              className="p-1 text-slate-500 hover:text-slate-300"
+              className="p-1 text-slate-400 hover:text-slate-200"
             >
               <X className="w-3.5 h-3.5" />
             </button>
           )}
         </form>
 
+        {/* Layer Controls Panel */}
+        <div className="p-3.5 rounded-xl border border-red-950/60 bg-[#0f0202]/20 space-y-2.5">
+          <span className="text-[10px] font-mono tracking-wider text-slate-400 font-bold uppercase block">RADAR OVERLAY LAYERS</span>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-300 font-semibold tracking-wide">Weather Hazard Radar</span>
+            <button
+              onClick={() => setShowWeatherLayer(!showWeatherLayer)}
+              className={`px-3 py-1.5 rounded-lg border font-mono text-[9px] font-bold transition-all duration-300 cursor-pointer ${
+                showWeatherLayer
+                  ? "bg-purple-950/40 border-purple-800/80 text-orange-500"
+                  : "bg-slate-950/40 border-red-950/40 text-slate-500 hover:text-slate-400"
+              }`}
+            >
+              {showWeatherLayer ? "ACTIVE" : "STANDBY"}
+            </button>
+          </div>
+        </div>
+
         {/* Telemetry Status Card */}
-        <div className="p-3.5 rounded-xl border border-blue-950/60 bg-[#050b18]/20 space-y-2.5">
+        <div className="p-3.5 rounded-xl border border-red-950/60 bg-[#0f0202]/20 space-y-2.5">
           <div className="flex items-center justify-between">
-            <span className="text-[9px] font-mono tracking-widest text-slate-500">LIVE FEED</span>
-            <span className="inline-flex items-center gap-1 text-[8px] font-mono text-blue-400">
-              <span className="w-1 h-1 rounded-full bg-blue-500 animate-ping" />
+            <span className="text-[10px] font-mono tracking-wider text-slate-400 font-bold uppercase">LIVE FEED</span>
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-red-400 font-bold">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
               CONNECTED
             </span>
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-left">
-            <div className="bg-slate-950/40 p-2 rounded border border-blue-950/30">
-              <span className="block text-[8px] font-mono text-slate-500">ACTIVE TRACKS</span>
-              <span className="text-sm font-bold font-mono text-slate-300">
+            <div className="bg-slate-950/40 p-2.5 rounded border border-red-950/30">
+              <span className="block text-[9px] font-mono tracking-wider text-slate-400 uppercase font-semibold">ACTIVE TRACKS</span>
+              <span className="text-base font-bold font-mono text-slate-200">
                 {loading ? "..." : flights.length}
               </span>
             </div>
-            <div className="bg-slate-950/40 p-2 rounded border border-blue-950/30">
-              <span className="block text-[8px] font-mono text-slate-500">LAST SYNC</span>
-              <span className="text-sm font-bold font-mono text-slate-300 truncate">
+            <div className="bg-slate-950/40 p-2.5 rounded border border-red-950/30">
+              <span className="block text-[9px] font-mono tracking-wider text-slate-400 uppercase font-semibold">LAST SYNC</span>
+              <span className="text-base font-bold font-mono text-slate-200 truncate">
                 {lastUpdated}
               </span>
             </div>
@@ -474,38 +755,38 @@ export default function LiveMap() {
 
         {/* SIGNAL LOSS & ANOMALY LOG FEED */}
         <div className="flex-1 flex flex-col justify-start min-h-[250px]">
-          <div className="flex items-center justify-between border-b border-blue-950/40 pb-2 mb-2">
-            <span className="text-[9px] font-mono tracking-widest text-slate-500 font-bold uppercase">SIGNAL LOSS & ALERTS</span>
-            <span className="text-[8px] font-mono text-red-500 uppercase">SYS_CRIT</span>
+          <div className="flex items-center justify-between border-b border-red-950/40 pb-2 mb-2">
+            <span className="text-[10px] font-mono tracking-wider text-slate-300 font-bold uppercase">SIGNAL LOSS & ALERTS</span>
+            <span className="text-[10px] font-mono text-red-400 font-bold uppercase">SYS_CRIT</span>
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar">
             {signalLossFeed.map((alert) => (
               <div 
                 key={alert.id}
-                className={`p-2.5 rounded border text-[10px] font-mono space-y-1.5 transition-colors duration-300 ${
+                className={`p-3 rounded border text-xs font-mono space-y-2 transition-colors duration-300 ${
                   alert.type === "SIMULATION_ACTIVE" 
-                    ? "bg-blue-950/10 border-blue-900/50 hover:bg-blue-950/20" 
-                    : "bg-red-950/5 border-red-950/50 hover:bg-red-950/10"
+                    ? "bg-red-950/15 border-red-900/60 hover:bg-red-950/25" 
+                    : "bg-red-950/10 border-red-950/60 hover:bg-red-950/20"
                 }`}
               >
                 <div className="flex justify-between items-center">
-                  <span className={`font-bold ${alert.type === "SIMULATION_ACTIVE" ? "text-blue-400" : "text-red-500"}`}>
+                  <span className={`font-bold ${alert.type === "SIMULATION_ACTIVE" ? "text-red-400" : "text-red-400"}`}>
                     {alert.type}
                   </span>
-                  <span className="text-[8px] text-slate-600">{alert.timestamp}</span>
+                  <span className="text-[10px] text-slate-400 font-semibold">{alert.timestamp}</span>
                 </div>
                 
-                <div className="flex justify-between text-slate-400">
-                  <span>FLIGHT: <span className="text-slate-200">{alert.callsign}</span></span>
-                  <span>HEX: <span className="text-slate-200">{alert.icao24}</span></span>
+                <div className="flex justify-between text-slate-300 text-[11px] border-b border-red-950/10 pb-1">
+                  <span>FLIGHT: <span className="text-white font-bold">{alert.callsign}</span></span>
+                  <span>HEX: <span className="text-white font-bold">{alert.icao24}</span></span>
                 </div>
 
-                <p className="text-slate-500 leading-normal border-t border-blue-950/20 pt-1 text-[9px]">
+                <p className="text-slate-200 font-sans text-xs leading-relaxed">
                   {alert.description}
                 </p>
 
-                <div className="text-[8px] text-slate-600 text-right">
+                <div className="text-[10px] text-slate-400 text-right font-mono border-t border-red-950/20 pt-1">
                   COORD: {alert.lat}, {alert.lon}
                 </div>
               </div>
@@ -533,22 +814,90 @@ export default function LiveMap() {
           />
 
           {/* Renders all filtered tracked flights */}
-          {filteredFlights.map((flight) => (
+          {filteredFlights.map((flight) => {
+            const isAtRisk = isFlightAtRisk(flight);
+            return (
+              <Marker
+                key={flight.icao24}
+                position={[flight.latitude, flight.longitude]}
+                icon={getAirplaneIcon(
+                  flight.icao24,
+                  flight.heading,
+                  selectedFlight?.icao24 === flight.icao24,
+                  isAtRisk
+                )}
+                eventHandlers={{
+                  click: () => {
+                    setSelectedFlight(flight);
+                    setSelectedRiskZone(null);
+                    setSelectedFlightPath(generateSimulatedPath(flight));
+                    setViewTarget({ center: [flight.latitude, flight.longitude], zoom: 5 });
+                  },
+                }}
+              />
+            );
+          })}
+
+          {/* Render Historical Risk Zones */}
+          {riskZones.map((zone) => (
             <Marker
-              key={flight.icao24}
-              position={[flight.latitude, flight.longitude]}
-              icon={getAirplaneIcon(
-                flight.icao24,
-                flight.heading,
-                selectedFlight?.icao24 === flight.icao24
-              )}
+              key={zone.id || `${zone.Latitude}-${zone.Longitude}`}
+              position={[zone.Latitude, zone.Longitude]}
+              icon={getRiskZoneIcon(selectedRiskZone?.id === zone.id)}
               eventHandlers={{
                 click: () => {
-                  setSelectedFlight(flight);
-                  setViewTarget({ center: [flight.latitude, flight.longitude], zoom: 5 });
+                  setSelectedRiskZone(zone);
+                  setSelectedFlight(null);
+                  setSimulationData(null);
+                  setViewTarget({ center: [zone.Latitude, zone.Longitude], zoom: 6 });
                 },
               }}
             />
+          ))}
+
+          {/* Render Selected Flight Path History */}
+          {selectedFlight && selectedFlightPath.length > 0 && (
+            <Polyline
+              positions={selectedFlightPath}
+              pathOptions={{
+                color: "#ef4444",
+                weight: 3.5,
+                opacity: 0.7,
+                lineCap: "round",
+                lineJoin: "round"
+              }}
+            />
+          )}
+
+          {/* Render Weather Hazard Storm Cells */}
+          {showWeatherLayer && GLOBAL_STORM_CELLS.map((cell) => (
+            <React.Fragment key={cell.id}>
+              <Circle
+                center={[cell.lat, cell.lon]}
+                radius={cell.radius}
+                pathOptions={{
+                  color: "#ea580c",
+                  fillColor: "#f97316",
+                  fillOpacity: 0.12,
+                  weight: 1.5,
+                  dashArray: "4, 6"
+                }}
+              />
+              <Marker
+                position={[cell.lat, cell.lon]}
+                icon={getStormIcon()}
+              >
+                <Popup>
+                  <div className="p-2.5 font-mono text-xs bg-[#050101]/95 text-slate-200 border border-orange-950/80 rounded-lg shadow-xl space-y-1.5 select-none">
+                    <span className="block font-bold text-orange-500 border-b border-red-950/40 pb-1">{cell.name}</span>
+                    <span className="block text-[9px] text-red-400 uppercase font-bold">HAZARD LEVEL: CRITICAL</span>
+                    <div className="pt-1 font-sans text-slate-300">
+                      {cell.type}
+                    </div>
+                  </div>
+                </Popup>
+              </Marker>
+            </React.Fragment>
           ))}
 
           {/* Render Crash Simulation overlays if active */}
@@ -570,19 +919,34 @@ export default function LiveMap() {
                 />
               )}
 
-              {/* 2. Debris drift path line (Impact Point -> Drift Center) */}
-              <Polyline 
-                positions={[
-                  simulationData.impact_point,
-                  simulationData.drift_point
-                ]}
-                pathOptions={{
-                  color: "#fbbf24",
-                  dashArray: "4, 4",
-                  weight: 2,
-                  opacity: 0.8
-                }}
-              />
+              {/* 2. Debris drift path line (Impact Point -> Drift Center or 24/48/72h trajectory) */}
+              {simulationData.drift_trajectory ? (
+                <Polyline 
+                  positions={[
+                    simulationData.impact_point,
+                    ...simulationData.drift_trajectory.map((step: any) => step.coordinates)
+                  ]}
+                  pathOptions={{
+                    color: "#fbbf24",
+                    dashArray: "4, 6",
+                    weight: 3.5,
+                    opacity: 0.9
+                  }}
+                />
+              ) : (
+                <Polyline 
+                  positions={[
+                    simulationData.impact_point,
+                    simulationData.drift_point
+                  ]}
+                  pathOptions={{
+                    color: "#fbbf24",
+                    dashArray: "4, 4",
+                    weight: 2,
+                    opacity: 0.8
+                  }}
+                />
+              )}
 
               {/* 3. Impact Point (PIP) Marker */}
               <Marker 
@@ -590,24 +954,75 @@ export default function LiveMap() {
                 icon={getImpactIcon()}
               />
 
-              {/* 4. Drift Center (DSAC) Marker */}
-              <Marker 
-                position={simulationData.drift_point}
-                icon={getDriftIcon()}
-              />
-
-              {/* 5. Uncertainty Search Radius Circle */}
-              <Circle 
-                center={simulationData.drift_point}
-                radius={5000} // 5km search zone
-                pathOptions={{
-                  color: "#fbbf24",
-                  fillColor: "#fbbf24",
-                  fillOpacity: 0.1,
-                  dashArray: "5, 5",
-                  weight: 1.5
-                }}
-              />
+              {/* 4. Drift Steps or Drift Center (DSAC) Marker */}
+              {simulationData.drift_trajectory ? (
+                simulationData.drift_trajectory.map((step: any, idx: number) => (
+                  <React.Fragment key={idx}>
+                    {/* Expanding uncertainty search grid circles (in meters) */}
+                    <Circle 
+                      center={step.coordinates}
+                      radius={step.uncertainty_radius_km * 1000}
+                      pathOptions={{
+                        color: idx === 0 ? "#fbbf24" : idx === 1 ? "#f59e0b" : "#ea580c",
+                        fillColor: idx === 0 ? "#fbbf24" : idx === 1 ? "#f59e0b" : "#ea580c",
+                        fillOpacity: 0.06,
+                        dashArray: "5, 5",
+                        weight: 1.5
+                      }}
+                    />
+                    {/* Floating coordinate ping marker */}
+                    <Marker 
+                      position={step.coordinates}
+                      icon={getDriftIconForTime(step.time_hours)}
+                    >
+                      <Popup>
+                        <div className="p-3.5 font-mono text-[10px] bg-[#0c0303]/95 text-slate-200 border border-red-950/80 rounded-lg shadow-xl space-y-1.5 select-none min-w-[200px]">
+                          <span className="block font-bold text-amber-400 border-b border-red-950/40 pb-1 font-mono uppercase">PROJECTED DEBRIS STEP: +{step.time_hours}H</span>
+                          <div className="space-y-1 text-slate-300">
+                            <div className="flex justify-between">
+                              <span>DRIFT RANGE:</span>
+                              <span className="text-white font-bold">{step.distance_km} km</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>UNCERTAINTY:</span>
+                              <span className="text-white font-bold">±{step.uncertainty_radius_km} km</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>OCEAN CURRENT:</span>
+                              <span className="text-cyan-400 font-bold">{step.current_speed_ms} m/s</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>CURRENT DIR:</span>
+                              <span className="text-cyan-400 font-bold">{step.current_heading}°</span>
+                            </div>
+                          </div>
+                          <div className="text-[9px] text-slate-500 border-t border-red-950/20 pt-1 text-right">
+                            COORD: {step.coordinates[0].toFixed(4)}, {step.coordinates[1].toFixed(4)}
+                          </div>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  </React.Fragment>
+                ))
+              ) : (
+                <>
+                  <Marker 
+                    position={simulationData.drift_point}
+                    icon={getDriftIcon()}
+                  />
+                  <Circle 
+                    center={simulationData.drift_point}
+                    radius={5000} // 5km search zone
+                    pathOptions={{
+                      color: "#fbbf24",
+                      fillColor: "#fbbf24",
+                      fillOpacity: 0.1,
+                      dashArray: "5, 5",
+                      weight: 1.5
+                    }}
+                  />
+                </>
+              )}
             </>
           )}
 
@@ -634,16 +1049,16 @@ export default function LiveMap() {
                 icon={getShipIcon(nearestVessel.typeCode)}
               >
                 <Popup>
-                  <div className="p-2.5 font-mono text-[10px] bg-[#02050d]/95 text-slate-200 border border-blue-950/80 rounded-lg shadow-xl space-y-1 select-none">
-                    <span className="block font-bold text-teal-400 border-b border-blue-950/40 pb-1">{nearestVessel.name}</span>
-                    <span className="block text-[8px] text-slate-500 uppercase">{nearestVessel.type}</span>
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 pt-1">
-                      <span className="text-slate-500">MMSI:</span>
-                      <span className="text-slate-300 font-bold">{nearestVessel.mmsi}</span>
-                      <span className="text-slate-500">SPEED:</span>
-                      <span className="text-slate-300 font-bold">{nearestVessel.speed} kts</span>
-                      <span className="text-slate-500">RANGE:</span>
-                      <span className="text-teal-400 font-bold">{nearestVessel.distance} km</span>
+                  <div className="p-3 font-mono text-xs bg-[#050101]/95 text-slate-200 border border-red-950/80 rounded-lg shadow-xl space-y-1.5 select-none">
+                    <span className="block font-bold text-amber-400 border-b border-red-950/40 pb-1">{nearestVessel.name}</span>
+                    <span className="block text-[10px] text-slate-400 uppercase font-semibold">{nearestVessel.type}</span>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1">
+                      <span className="text-slate-400">MMSI:</span>
+                      <span className="text-white font-bold">{nearestVessel.mmsi}</span>
+                      <span className="text-slate-400">SPEED:</span>
+                      <span className="text-white font-bold">{nearestVessel.speed} kts</span>
+                      <span className="text-slate-400">RANGE:</span>
+                      <span className="text-amber-300 font-bold">{nearestVessel.distance} km</span>
                     </div>
                   </div>
                 </Popup>
@@ -658,15 +1073,60 @@ export default function LiveMap() {
           />
         </MapContainer>
 
+        {/* Floating High-Risk Terrain Zone Detail Panel (Left) */}
+        {selectedRiskZone && (
+          <div className="absolute top-6 left-6 z-[1000] w-80 rounded-xl border border-red-950/90 bg-[#0f0202]/95 backdrop-blur-md shadow-2xl p-5 space-y-4 font-sans select-none">
+            <div className="flex items-center justify-between border-b border-red-950/60 pb-3">
+              <div className="space-y-1">
+                <span className="text-[10px] font-mono text-red-400 tracking-wider uppercase font-bold flex items-center gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                  TERRAIN_HAZARD_ZONE
+                </span>
+                <h3 className="text-base font-bold text-slate-100 uppercase tracking-wide leading-snug">
+                  {selectedRiskZone.Location}
+                </h3>
+              </div>
+              <button
+                onClick={() => setSelectedRiskZone(null)}
+                className="p-1.5 rounded bg-red-950/30 border border-red-900/30 text-slate-400 hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="bg-[#0c0303]/80 p-3 rounded border border-red-950/50">
+                <span className="block text-[9px] font-mono text-red-400 uppercase font-bold tracking-wider mb-1">COORDINATES</span>
+                <div className="grid grid-cols-2 gap-2 text-xs font-mono text-slate-300">
+                  <div>LAT: <span className="text-white font-bold">{selectedRiskZone.Latitude.toFixed(4)}</span></div>
+                  <div>LON: <span className="text-white font-bold">{selectedRiskZone.Longitude.toFixed(4)}</span></div>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="block text-[9px] font-mono text-red-400 uppercase font-bold tracking-wider">HISTORICAL CFIT REPORT</span>
+                <p className="text-xs text-slate-200 leading-relaxed font-sans bg-red-950/10 p-3 rounded border border-red-950/30">
+                  {selectedRiskZone.Reason}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 pt-2 border-t border-red-950/40 text-[10px] font-mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+                <span className="text-red-400 font-bold uppercase">CFIT HISTORY VERIFIED</span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Floating Flight Detail Panel (Right) */}
         {selectedFlight && (
-          <div className="absolute top-6 right-6 z-[1000] w-80 max-h-[calc(100vh-140px)] overflow-y-auto rounded-xl border border-blue-950/70 bg-[#04091a]/85 backdrop-blur-md shadow-2xl p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-blue-950/50 pb-3">
-              <div className="space-y-0.5">
-                <span className="text-[8px] font-mono text-blue-400 tracking-widest uppercase">TELEMETRY_LINK</span>
-                <h3 className="text-lg font-bold font-mono text-slate-100 flex items-center gap-2">
+          <div className="absolute top-6 right-6 z-[1000] w-80 max-h-[calc(100vh-140px)] overflow-y-auto rounded-xl border border-red-950/70 bg-[#0d0202]/90 backdrop-blur-md shadow-2xl p-5 space-y-4 font-sans">
+            <div className="flex items-center justify-between border-b border-red-950/50 pb-3">
+              <div className="space-y-1">
+                <span className="text-[10px] font-mono text-red-400 tracking-wider uppercase font-bold">TELEMETRY_LINK</span>
+                <h3 className="text-xl font-bold text-slate-100 flex items-center gap-2">
                   <Navigation
-                    className="w-4 h-4 text-blue-500"
+                    className="w-5 h-5 text-red-400"
                     style={{ transform: `rotate(${selectedFlight.heading}deg)` }}
                   />
                   {selectedFlight.callsign}
@@ -677,87 +1137,193 @@ export default function LiveMap() {
                   setSelectedFlight(null);
                   setSimulationData(null);
                 }}
-                className="p-1 rounded bg-blue-950/30 border border-blue-900/30 text-slate-500 hover:text-slate-300"
+                className="p-1.5 rounded bg-red-950/30 border border-red-900/30 text-slate-400 hover:text-slate-200 cursor-pointer"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="space-y-3">
-              <div className="flex justify-between items-center bg-slate-950/30 p-2 rounded border border-blue-950/30">
-                <span className="text-[9px] font-mono text-slate-500 uppercase">ICAO24 HEX</span>
-                <span className="text-xs font-mono font-bold text-slate-300 uppercase">{selectedFlight.icao24}</span>
+              <div className="flex justify-between items-center bg-slate-950/30 p-2.5 rounded border border-red-950/30">
+                <span className="text-[10px] font-mono text-slate-400 uppercase font-semibold">ICAO24 HEX</span>
+                <span className="text-sm font-mono font-bold text-slate-200 uppercase">{selectedFlight.icao24}</span>
               </div>
 
-              <div className="flex justify-between items-center bg-slate-950/30 p-2 rounded border border-blue-950/30">
-                <span className="text-[9px] font-mono text-slate-500 uppercase">ORIGIN REGION</span>
-                <span className="text-xs font-mono font-bold text-slate-300 truncate max-w-[150px]">
+              <div className="flex justify-between items-center bg-slate-950/30 p-2.5 rounded border border-red-950/30">
+                <span className="text-[10px] font-mono text-slate-400 uppercase font-semibold">ORIGIN REGION</span>
+                <span className="text-sm font-mono font-bold text-slate-200 truncate max-w-[150px]">
                   {selectedFlight.origin_country}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                <div className="bg-slate-950/30 p-2 rounded border border-blue-950/30">
-                  <span className="block text-[8px] font-mono text-slate-500 uppercase">ALTITUDE</span>
-                  <span className="text-xs font-mono font-bold text-slate-200">
+                <div className="bg-slate-950/30 p-2.5 rounded border border-red-950/30">
+                  <span className="block text-[9px] font-mono text-slate-400 uppercase font-semibold">ALTITUDE</span>
+                  <span className="text-sm font-mono font-bold text-white">
                     {selectedFlight.altitude ? `${selectedFlight.altitude.toLocaleString()} m` : "0 m"}
                   </span>
-                  <span className="block text-[7px] text-slate-600 font-mono mt-0.5">
+                  <span className="block text-[10px] text-slate-400 font-mono mt-0.5">
                     {selectedFlight.altitude ? `~${Math.round(selectedFlight.altitude * 3.28084).toLocaleString()} ft` : "0 ft"}
                   </span>
                 </div>
                 
-                <div className="bg-slate-950/30 p-2 rounded border border-blue-950/30">
-                  <span className="block text-[8px] font-mono text-slate-500 uppercase">VELOCITY</span>
-                  <span className="text-xs font-mono font-bold text-slate-200">
+                <div className="bg-slate-950/30 p-2.5 rounded border border-red-950/30">
+                  <span className="block text-[9px] font-mono text-slate-400 uppercase font-semibold">VELOCITY</span>
+                  <span className="text-sm font-mono font-bold text-white">
                     {selectedFlight.velocity ? `${selectedFlight.velocity} km/h` : "0 km/h"}
                   </span>
-                  <span className="block text-[7px] text-slate-600 font-mono mt-0.5">
+                  <span className="block text-[10px] text-slate-400 font-mono mt-0.5">
                     {selectedFlight.velocity ? `~${Math.round(selectedFlight.velocity * 0.539957)} kts` : "0 kts"}
                   </span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 border-b border-blue-950/40 pb-4">
-                <div className="bg-slate-950/30 p-2 rounded border border-blue-950/30">
-                  <span className="block text-[8px] font-mono text-slate-500 uppercase">COORDINATES</span>
-                  <span className="text-[9px] font-mono font-bold text-slate-300 block truncate">
+              <div className="grid grid-cols-2 gap-2 border-b border-red-950/40 pb-4">
+                <div className="bg-slate-950/30 p-2.5 rounded border border-red-950/30">
+                  <span className="block text-[9px] font-mono text-slate-400 uppercase font-semibold">COORDINATES</span>
+                  <span className="text-[10px] font-mono font-bold text-slate-200 block truncate">
                     LAT: {selectedFlight.latitude.toFixed(4)}
                   </span>
-                  <span className="text-[9px] font-mono font-bold text-slate-300 block truncate">
+                  <span className="text-[10px] font-mono font-bold text-slate-200 block truncate mt-0.5">
                     LON: {selectedFlight.longitude.toFixed(4)}
                   </span>
                 </div>
 
-                <div className="bg-slate-950/30 p-2 rounded border border-blue-950/30 flex flex-col justify-between">
+                <div className="bg-slate-950/30 p-2.5 rounded border border-red-950/30 flex flex-col justify-between">
                   <div>
-                    <span className="block text-[8px] font-mono text-slate-500 uppercase">HEADING</span>
-                    <span className="text-xs font-mono font-bold text-slate-200">{selectedFlight.heading}°</span>
+                    <span className="block text-[9px] font-mono text-slate-400 uppercase font-semibold">HEADING</span>
+                    <span className="text-sm font-mono font-bold text-white">{selectedFlight.heading}°</span>
                   </div>
                   <div className="flex items-center gap-1 mt-1">
-                    <Compass className="w-3 h-3 text-blue-500 animate-spin" style={{ animationDuration: '6s' }} />
-                    <span className="text-[7px] font-mono text-slate-600">MAGNETIC YAW</span>
+                    <Compass className="w-3.5 h-3.5 text-red-400 animate-spin" style={{ animationDuration: '6s' }} />
+                    <span className="text-[9px] font-mono text-slate-400 font-bold">MAGNETIC YAW</span>
                   </div>
                 </div>
               </div>
 
+              {/* Weather HUD Card */}
+              {weatherLoading ? (
+                <div className="bg-red-950/10 border border-red-950/40 p-3.5 rounded-lg text-center font-mono text-[9px] text-slate-400">
+                  LOADING METEOROLOGICAL TELEMETRY...
+                </div>
+              ) : selectedFlightWeather ? (
+                <div className={`p-3.5 rounded-lg space-y-2 border ${
+                  selectedFlightWeather.wind_speed > 15 || selectedFlightWeather.main === "Thunderstorm" || selectedFlightWeather.main === "Rain"
+                    ? "bg-red-950/15 border-red-900/40"
+                    : "bg-red-950/10 border-red-950/40"
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-red-400">
+                      <svg className="w-4 h-4 text-red-500 animate-pulse" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19.36 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.64-4.96z"/>
+                      </svg>
+                      <span className="text-[10px] font-mono font-bold tracking-wider uppercase">METEOROLOGICAL PROFILE</span>
+                    </div>
+                    {selectedFlightWeather.wind_speed > 15 && (
+                      <span className="text-[9px] font-mono bg-red-950/80 text-red-400 px-1.5 py-0.5 rounded border border-red-900/50 font-bold uppercase animate-pulse">WIND WARNING</span>
+                    )}
+                  </div>
+                  <div className="flex justify-between items-start font-mono text-[11px] text-slate-300">
+                    <div>
+                      <span className="block text-white font-bold capitalize text-xs">{selectedFlightWeather.description}</span>
+                      <span className="text-[10px] text-slate-400">TEMP: {selectedFlightWeather.temp}°C | HUMID: {selectedFlightWeather.humidity}%</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="block font-bold text-white">WIND: {selectedFlightWeather.wind_speed} m/s</span>
+                      <span className="text-[9px] text-slate-400">HDG: {selectedFlightWeather.wind_deg}°</span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Weather Deviation Index HUD Card */}
+              {selectedFlight && highestWdi > 0 && activeStormCell && (
+                <div className={`p-3.5 rounded-lg space-y-2 border ${
+                  highestWdi > 70
+                    ? "bg-red-950/20 border-red-500/40 shadow-[0_0_12px_rgba(239,68,68,0.15)] animate-pulse"
+                    : highestWdi > 30
+                    ? "bg-yellow-950/20 border-yellow-500/40"
+                    : "bg-slate-900/40 border-slate-800"
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-orange-400">
+                      <Compass className="w-4 h-4 text-orange-500" />
+                      <span className="text-[10px] font-mono font-bold tracking-wider uppercase">WEATHER DEVIATION HUD</span>
+                    </div>
+                    {highestWdi > 70 && (
+                      <span className="text-[8px] font-mono bg-red-950/80 text-red-400 px-1.5 py-0.5 rounded border border-red-500/50 font-bold uppercase">AVOIDANCE CORE</span>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between items-center text-[10px] font-mono text-slate-300">
+                      <span>STORM CORRELATION:</span>
+                      <span className="font-bold text-white truncate max-w-[120px]">{activeStormCell.name}</span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-[10px] font-mono text-slate-300">
+                      <span>DISTANCE TO CORE:</span>
+                      <span className="font-bold text-white">{activeStormCell.distance} km</span>
+                    </div>
+
+                    {/* WDI score and progress bar */}
+                    <div className="space-y-1 pt-1.5 border-t border-red-950/30">
+                      <div className="flex justify-between items-center text-[10px] font-mono">
+                        <span className="text-slate-400">DEVIATION INDEX (WDI):</span>
+                        <span className={`font-bold ${
+                          highestWdi > 70 ? "text-red-400 font-bold" : highestWdi > 30 ? "text-yellow-400" : "text-green-400"
+                        }`}>{highestWdi}%</span>
+                      </div>
+                      <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-red-950/30">
+                        <div 
+                          className={`h-full transition-all duration-500 ${
+                            highestWdi > 70 ? "bg-red-500" : highestWdi > 30 ? "bg-yellow-500" : "bg-green-500"
+                          }`}
+                          style={{ width: `${highestWdi}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Active Atmospheric Risks */}
+                    <div className="text-[9px] font-mono pt-1.5 border-t border-red-950/30 space-y-1 text-slate-400 select-none">
+                      <span className="block text-[8px] text-slate-500 font-bold uppercase mb-0.5">ATMOSPHERIC RISKS DETECTED:</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={highestWdi > 30 ? "text-red-400 font-bold" : "text-slate-600"}>
+                          {highestWdi > 30 ? "✓" : "✗"} CONVECTIVE WIND SHEAR
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className={highestWdi > 60 ? "text-red-400 font-bold" : "text-slate-600"}>
+                          {highestWdi > 60 ? "✓" : "✗"} SEVERE CAT TURBULENCE
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className={highestWdi > 75 ? "text-red-400 font-bold" : "text-slate-600"}>
+                          {highestWdi > 75 ? "✓" : "✗"} ENGINE FLAMEOUT RISK
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Nearest Maritime Vessel Display */}
               {nearestVessel && (
-                <div className="bg-teal-950/15 border border-teal-900/40 p-3 rounded-lg space-y-1.5">
-                  <div className="flex items-center gap-1.5 text-teal-400">
-                    <svg className="w-3.5 h-3.5 text-teal-500 animate-pulse" viewBox="0 0 24 24" fill="currentColor">
+                <div className="bg-amber-950/15 border border-amber-900/40 p-3.5 rounded-lg space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-amber-400">
+                    <svg className="w-4 h-4 text-teal-500 animate-pulse" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.64 2.62.99 4 .99h2v-2h-2zM3.93 11L2 17h20l-1.93-6H3.93zm3.57-6l-1.2 3.6L12 12l5.7-3.4-1.2-3.6H7.5z"/>
                     </svg>
-                    <span className="text-[9px] font-mono font-bold tracking-wider uppercase">NEAREST MARITIME VESSEL</span>
+                    <span className="text-[10px] font-mono font-bold tracking-wider uppercase">NEAREST MARITIME VESSEL</span>
                   </div>
                   <div className="flex justify-between items-start">
                     <div className="space-y-0.5">
-                      <span className="block text-[10px] font-bold text-slate-200">{nearestVessel.name}</span>
-                      <span className="block text-[8px] text-slate-500 uppercase">{nearestVessel.type}</span>
+                      <span className="block text-xs font-bold text-slate-200">{nearestVessel.name}</span>
+                      <span className="block text-[10px] text-slate-400 uppercase font-semibold">{nearestVessel.type}</span>
                     </div>
                     <div className="text-right">
-                      <span className="block text-[10px] font-bold text-teal-400 font-mono">{nearestVessel.distance} km</span>
-                      <span className="block text-[7px] text-slate-600 font-mono">PROXIMITY</span>
+                      <span className="block text-xs font-bold text-amber-300 font-mono">{nearestVessel.distance} km</span>
+                      <span className="block text-[9px] text-slate-400 font-mono font-bold uppercase">PROXIMITY</span>
                     </div>
                   </div>
                 </div>
@@ -767,15 +1333,15 @@ export default function LiveMap() {
               {(() => {
                 const helpline = getHelplineForCountry(selectedFlight.origin_country);
                 return (
-                  <div className="bg-red-950/20 border border-red-900/40 p-3 rounded-lg space-y-1.5">
+                  <div className="bg-red-950/20 border border-red-900/40 p-3.5 rounded-lg space-y-2">
                     <div className="flex items-center gap-1.5 text-red-400">
-                      <Radio className="w-3.5 h-3.5 text-red-500 animate-pulse" />
-                      <span className="text-[9px] font-mono font-bold tracking-wider uppercase">EMERGENCY ATC/SAR LIAISON</span>
+                      <Radio className="w-4 h-4 text-red-500 animate-pulse" />
+                      <span className="text-[10px] font-mono font-bold tracking-wider uppercase">EMERGENCY ATC/SAR LIAISON</span>
                     </div>
-                    <div className="space-y-0.5 select-text">
-                      <span className="block text-[10px] font-bold text-slate-200">{helpline.agency}</span>
-                      <span className="block text-[11px] font-mono font-bold text-red-400 cursor-pointer">{helpline.number}</span>
-                      <p className="text-[8px] text-slate-500 leading-normal">{helpline.description}</p>
+                    <div className="space-y-1 select-text">
+                      <span className="block text-xs font-bold text-slate-200">{helpline.agency}</span>
+                      <span className="block text-sm font-mono font-bold text-red-300 cursor-pointer">{helpline.number}</span>
+                      <p className="text-[10px] font-sans text-slate-300 leading-normal">{helpline.description}</p>
                     </div>
                   </div>
                 );
@@ -786,15 +1352,15 @@ export default function LiveMap() {
                 <button
                   onClick={() => runCrashSimulation(selectedFlight)}
                   disabled={simulating || selectedFlight.on_ground}
-                  className={`w-full py-3 rounded-lg font-mono text-xs tracking-wider border font-bold flex items-center justify-center gap-2 transition-all duration-300 ${
+                  className={`w-full py-3.5 rounded-lg font-mono text-xs tracking-wider border font-bold flex items-center justify-center gap-2 transition-all duration-300 cursor-pointer ${
                     selectedFlight.on_ground
-                      ? "bg-slate-950/20 border-slate-900 text-slate-700 cursor-not-allowed"
+                      ? "bg-slate-950/20 border-slate-900 text-slate-600 cursor-not-allowed"
                       : simulating
-                      ? "bg-blue-950/40 border-blue-800/80 text-blue-300 cursor-wait animate-pulse"
+                      ? "bg-red-950/40 border-red-800/80 text-red-300 cursor-wait animate-pulse"
                       : "bg-red-950/40 border-red-900/60 text-red-400 hover:bg-red-950/70 hover:border-red-500 hover:text-red-300 shadow-lg shadow-red-900/10"
                   }`}
                 >
-                  <ShieldAlert className={`w-4 h-4 ${simulating ? "animate-spin" : ""}`} />
+                  <ShieldAlert className={`w-4.5 h-4.5 ${simulating ? "animate-spin" : ""}`} />
                   {selectedFlight.on_ground 
                     ? "ASSET GROUNDED" 
                     : simulating 
@@ -809,101 +1375,193 @@ export default function LiveMap() {
 
         {/* BOTTOM FLOATING TACTICAL SIMULATION HUD */}
         {simulationData && (
-          <div className="absolute bottom-6 left-6 right-6 md:left-6 md:right-auto md:w-[calc(100%-20rem)] max-w-4xl z-[1000] rounded-xl border border-blue-950/70 bg-[#040817]/90 backdrop-blur-md shadow-2xl p-5 font-mono text-[10px] space-y-4 select-none">
+          <div className="absolute bottom-6 left-6 right-6 md:left-6 md:right-auto md:w-[calc(100%-20rem)] max-w-4xl z-[1000] rounded-xl border border-red-950/70 bg-[#0d0202]/95 backdrop-blur-md shadow-2xl p-5 space-y-4 select-none font-sans">
             
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-blue-950/60 pb-2">
+            <div className="flex items-center justify-between border-b border-red-950/60 pb-2.5">
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                <span className="text-xs font-bold text-slate-200 tracking-wider">CRASH TRAJECTORY HUD & DRIFT METRICS</span>
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
+                <span className="text-xs md:text-sm font-bold text-white tracking-wider font-mono">CRASH TRAJECTORY HUD & DRIFT METRICS</span>
               </div>
               <button 
                 onClick={() => setSimulationData(null)}
-                className="text-slate-500 hover:text-slate-300 p-0.5 border border-blue-900/30 rounded bg-blue-950/20"
+                className="text-slate-400 hover:text-slate-200 p-1 border border-red-900/30 rounded bg-red-950/20 cursor-pointer"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Calculations & Weather grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              
-              {/* Column 1: Descent glide math */}
-              <div className="bg-slate-950/40 p-3 rounded-lg border border-blue-950/40 space-y-2">
-                <span className="block text-[8px] text-blue-400 font-bold uppercase">1. GLIDE descent (PIP)</span>
-                <div className="space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">GLIDE DISTANCE:</span>
-                    <span className="text-slate-300 font-bold">{simulationData.glide_distance_km} km</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">IMPACT COORD:</span>
-                    <span className="text-slate-300 font-bold">
-                      {simulationData.impact_point[0].toFixed(4)}, {simulationData.impact_point[1].toFixed(4)}
-                    </span>
-                  </div>
-                </div>
-                <div className="pt-1.5 border-t border-blue-950/30">
-                  <span className="block text-[7px] text-slate-600 uppercase font-bold mb-1">Glide Equation:</span>
-                  <code className="text-slate-400 text-[8px] bg-[#02050f]/80 p-1.5 rounded block whitespace-pre-wrap leading-relaxed">
-                    {simulationData.equations.glide}
-                  </code>
-                </div>
+            {/* Tab navigation headers */}
+            {simulationData.drift_trajectory && (
+              <div className="flex gap-4 border-b border-red-950/40 pb-2 mb-2 select-none">
+                <button
+                  onClick={() => setActiveSimulationTab("descent")}
+                  className={`px-3 py-1 font-mono text-xs font-bold rounded cursor-pointer transition-colors duration-300 ${
+                    activeSimulationTab === "descent"
+                      ? "bg-red-950/40 border border-red-800/60 text-red-400"
+                      : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  DESCENT TRAJECTORY
+                </button>
+                <button
+                  onClick={() => setActiveSimulationTab("sar")}
+                  className={`px-3 py-1 font-mono text-xs font-bold rounded cursor-pointer transition-colors duration-300 ${
+                    activeSimulationTab === "sar"
+                      ? "bg-yellow-950/40 border border-yellow-800/60 text-yellow-500 animate-pulse"
+                      : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  🌊 SAR DRIFT SIMULATOR
+                </button>
               </div>
+            )}
 
-              {/* Column 2: Ocean leeway drift math */}
-              <div className="bg-slate-950/40 p-3 rounded-lg border border-blue-950/40 space-y-2">
-                <span className="block text-[8px] text-yellow-500 font-bold uppercase">2. LEEWAY DEBRIS DRIFT (6H)</span>
-                <div className="space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">DRIFT RANGE:</span>
-                    <span className="text-slate-300 font-bold">{simulationData.drift_distance_km} km</span>
+            {activeSimulationTab === "descent" || !simulationData.drift_trajectory ? (
+              <>
+                {/* Calculations & Weather grid */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 font-mono text-xs">
+                  
+                  {/* Column 1: Descent glide math */}
+                  <div className="bg-slate-950/40 p-3.5 rounded-lg border border-red-950/40 space-y-2.5">
+                    <span className="block text-[10px] text-red-400 font-bold uppercase tracking-wider">1. GLIDE descent (PIP)</span>
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">GLIDE DISTANCE:</span>
+                        <span className="text-white font-bold">{simulationData.glide_distance_km} km</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">IMPACT COORD:</span>
+                        <span className="text-white font-bold">
+                          {simulationData.impact_point[0].toFixed(4)}, {simulationData.impact_point[1].toFixed(4)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-red-950/30">
+                      <span className="block text-[9px] text-slate-400 uppercase font-bold mb-1">Glide Equation:</span>
+                      <code className="text-slate-200 text-xs bg-[#050101]/90 p-2 border border-red-950/40 rounded block whitespace-pre-wrap leading-relaxed font-mono">
+                        {simulationData.equations.glide}
+                      </code>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">SEARCH CENTER:</span>
-                    <span className="text-slate-300 font-bold">
-                      {simulationData.drift_point[0].toFixed(4)}, {simulationData.drift_point[1].toFixed(4)}
-                    </span>
-                  </div>
-                </div>
-                <div className="pt-1.5 border-t border-blue-950/30">
-                  <span className="block text-[7px] text-slate-600 uppercase font-bold mb-1">Drift Equation (3% coefficient):</span>
-                  <code className="text-slate-400 text-[8px] bg-[#02050f]/80 p-1.5 rounded block whitespace-pre-wrap leading-relaxed">
-                    {simulationData.equations.drift}
-                  </code>
-                </div>
-              </div>
 
-              {/* Column 3: Local weather & waves math */}
-              <div className="bg-slate-950/40 p-3 rounded-lg border border-blue-950/40 space-y-2">
-                <span className="block text-[8px] text-cyan-400 font-bold uppercase">3. WEATHER & WAVE PROFILE</span>
-                <div className="space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">LOCAL WIND SPEED:</span>
-                    <span className="text-slate-300 font-bold">{simulationData.wind_speed_ms} m/s ({Math.round(simulationData.wind_speed_ms * 3.6)} km/h)</span>
+                  {/* Column 2: Ocean leeway drift math */}
+                  <div className="bg-slate-950/40 p-3.5 rounded-lg border border-red-950/40 space-y-2.5">
+                    <span className="block text-[10px] text-yellow-500 font-bold uppercase tracking-wider">2. LEEWAY DEBRIS DRIFT (6H)</span>
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">DRIFT RANGE:</span>
+                        <span className="text-white font-bold">{simulationData.drift_distance_km} km</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">SEARCH CENTER:</span>
+                        <span className="text-white font-bold">
+                          {simulationData.drift_point[0].toFixed(4)}, {simulationData.drift_point[1].toFixed(4)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-red-950/30">
+                      <span className="block text-[9px] text-slate-400 uppercase font-bold mb-1">Drift Equation (3% coefficient):</span>
+                      <code className="text-slate-200 text-xs bg-[#050101]/90 p-2 border border-red-950/40 rounded block whitespace-pre-wrap leading-relaxed font-mono">
+                        {simulationData.equations.drift}
+                      </code>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">EST. WAVE HEIGHT:</span>
-                    <span className="text-slate-300 font-bold">{simulationData.wave_height_meters} m</span>
+
+                  {/* Column 3: Local weather & waves math */}
+                  <div className="bg-slate-950/40 p-3.5 rounded-lg border border-red-950/40 space-y-2.5">
+                    <span className="block text-[10px] text-cyan-400 font-bold uppercase tracking-wider">3. WEATHER & WAVE PROFILE</span>
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">LOCAL WIND SPEED:</span>
+                        <span className="text-white font-bold">{simulationData.wind_speed_ms} m/s ({Math.round(simulationData.wind_speed_ms * 3.6)} km/h)</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">EST. WAVE HEIGHT:</span>
+                        <span className="text-white font-bold">{simulationData.wave_height_meters} m</span>
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-red-950/30">
+                      <span className="block text-[9px] text-slate-400 uppercase font-bold mb-1">Sea State Equation:</span>
+                      <code className="text-slate-200 text-xs bg-[#050101]/90 p-2 border border-red-950/40 rounded block whitespace-pre-wrap leading-relaxed font-mono">
+                        {simulationData.equations.waves}
+                      </code>
+                    </div>
                   </div>
-                </div>
-                <div className="pt-1.5 border-t border-blue-950/30">
-                  <span className="block text-[7px] text-slate-600 uppercase font-bold mb-1">Sea State Equation:</span>
-                  <code className="text-slate-400 text-[8px] bg-[#02050f]/80 p-1.5 rounded block whitespace-pre-wrap leading-relaxed">
-                    {simulationData.equations.waves}
-                  </code>
-                </div>
-              </div>
 
-            </div>
+                </div>
 
-            {/* AI Reasoning Narrative */}
-            <div className="bg-blue-950/10 border border-blue-950/50 p-3.5 rounded-lg space-y-1">
-              <span className="block text-[8px] text-blue-400 font-bold uppercase">AI IMPACT ANALYTICS (GEMINI REASONING ENGINE)</span>
-              <p className="text-slate-300 text-[9px] leading-relaxed">
-                {simulationData.narrative}
-              </p>
-            </div>
+                {/* AI Reasoning Narrative */}
+                <div className="bg-red-950/10 border border-red-950/50 p-4 rounded-lg space-y-1.5">
+                  <span className="block text-[10px] font-mono text-red-400 font-bold uppercase tracking-wider">AI IMPACT ANALYTICS (GEMINI REASONING ENGINE)</span>
+                  <p className="text-slate-100 text-xs font-sans leading-relaxed">
+                    {simulationData.narrative}
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Tab 2: SAR Ocean surface drift simulation details */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-5 font-mono text-xs items-stretch text-left">
+                  
+                  {/* Stepper Timeline for 24h, 48h, 72h */}
+                  <div className="md:col-span-7 bg-slate-950/40 p-4 rounded-lg border border-red-950/40 space-y-3.5 flex flex-col justify-between">
+                    <span className="block text-[10px] text-yellow-500 font-bold uppercase tracking-wider mb-2">OCEAN LEEWAY DRIFT STEPS (24H / 48H / 72H)</span>
+                    <div className="space-y-3">
+                      {simulationData.drift_trajectory.map((step: any, idx: number) => (
+                        <div key={idx} className="flex items-center gap-3.5 p-2 bg-[#0c0303]/40 rounded border border-red-950/20">
+                          <span className={`px-2 py-1 rounded text-[10px] font-bold font-mono shrink-0 text-center min-w-[70px] ${
+                            idx === 0 ? "bg-yellow-950/40 text-yellow-500" : idx === 1 ? "bg-orange-950/40 text-orange-500" : "bg-red-950/40 text-red-400 animate-pulse"
+                          }`}>
+                            +{step.time_hours} HOURS
+                          </span>
+                          <div className="flex-1 grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] text-slate-300">
+                            <div>COORD: <span className="text-white font-bold">{step.coordinates[0].toFixed(4)}, {step.coordinates[1].toFixed(4)}</span></div>
+                            <div>RANGE: <span className="text-white font-bold">{step.distance_km} km</span></div>
+                            <div>CURRENTS: <span className="text-cyan-400 font-bold">{step.current_speed_ms} m/s ({step.current_heading}°)</span></div>
+                            <div>UNCERTAINTY: <span className="text-amber-400 font-bold">±{step.uncertainty_radius_km} km</span></div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* SAR Advisory details */}
+                  <div className="md:col-span-5 bg-slate-950/40 p-4 rounded-lg border border-red-950/40 flex flex-col justify-between space-y-3">
+                    <div>
+                      <span className="block text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-2">SAR SEARCH & COORDINATION GRIDS</span>
+                      <div className="space-y-2 text-[11px] text-slate-300 font-mono">
+                        <div className="flex justify-between border-b border-red-950/20 pb-1.5">
+                          <span>RECOMMENDED PATTERN:</span>
+                          <span className="text-green-400 font-bold font-mono uppercase bg-green-950/30 px-1.5 py-0.5 rounded border border-green-900/40 shadow-sm">{simulationData.sar_advisory?.recommended_pattern || "Sector Search"}</span>
+                        </div>
+                        <div className="flex justify-between border-b border-red-950/20 pb-1.5">
+                          <span>TOTAL SEARCH GRID AREA:</span>
+                          <span className="text-white font-bold">{simulationData.sar_advisory?.search_area_sq_km || "140"} km²</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>WEATHER RISK LEVEL:</span>
+                          <span className={`font-bold uppercase ${
+                            simulationData.sar_advisory?.weather_risk_factor === "CRITICAL" ? "text-red-400 animate-pulse font-bold" : "text-yellow-400 font-bold"
+                          }`}>{simulationData.sar_advisory?.weather_risk_factor || "LOW"}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action plan checklist */}
+                    {simulationData.sar_advisory?.action_plan_markdown && (
+                      <div className="bg-[#050101]/90 border border-red-950/40 p-3 rounded font-sans text-[10px] leading-relaxed text-slate-300 text-left select-text max-h-[110px] overflow-y-auto">
+                        <span className="block font-mono text-[9px] text-red-500 font-bold uppercase tracking-wider mb-1">SEARCH CHECKLIST PROTOCOLS</span>
+                        <div className="markdown-sar-plan whitespace-pre-wrap leading-normal font-sans font-light">
+                          {simulationData.sar_advisory.action_plan_markdown}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              </>
+            )}
 
           </div>
         )}

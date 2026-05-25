@@ -78,6 +78,16 @@ Perform the following calculations using standard equations:
    - Project coordinates from the Impact Point (PIP) along the leeway direction by the drift distance.
 3. Sea wave height estimation (H):
    - Equation: H = 0.015 * (wind_speed)^2 in meters.
+4. Ocean Surface Leeway Debris Trajectory (24h, 48h, and 72h steps):
+   - Combine a constant surface ocean current (speed = 0.25 m/s, direction = wind_deg - 45 degrees) with wind leeway (3% of wind speed, directed at wind_deg + 180 degrees) as a combined drift vector.
+   - Calculate drift coordinate offsets from the Impact Point at:
+     - 24 hours (86400 seconds)
+     - 48 hours (172800 seconds)
+     - 72 hours (259200 seconds)
+   - Assign growing uncertainty search radiuses: 10km at 24h, 25km at 48h, and 50km at 72h.
+5. Search & Rescue (SAR) Tactical Advisory:
+   - Provide an optimized search pattern based on current vectors (e.g., "Sector Search" for tight 24h grids, "Creeping Line Search" or "Parallel Sweep Search" for long trajectories).
+   - Calculate search area bounds and write an actionable search execution checklist.
 
 Output a strictly formatted JSON response containing the exact calculated coordinates, values, equations, and a markdown explanation.
 The JSON must match this schema:
@@ -89,6 +99,38 @@ The JSON must match this schema:
   "wind_speed_ms": number,
   "wind_heading": number,
   "wave_height_meters": number (rounded to 2 decimals),
+  "drift_trajectory": [
+    {
+      "time_hours": 24,
+      "coordinates": [number (lat), number (lon)],
+      "distance_km": number,
+      "uncertainty_radius_km": number,
+      "current_speed_ms": number,
+      "current_heading": number
+    },
+    {
+      "time_hours": 48,
+      "coordinates": [number (lat), number (lon)],
+      "distance_km": number,
+      "uncertainty_radius_km": number,
+      "current_speed_ms": number,
+      "current_heading": number
+    },
+    {
+      "time_hours": 72,
+      "coordinates": [number (lat), number (lon)],
+      "distance_km": number,
+      "uncertainty_radius_km": number,
+      "current_speed_ms": number,
+      "current_heading": number
+    }
+  ],
+  "sar_advisory": {
+    "recommended_pattern": "string (e.g. Sector Search)",
+    "search_area_sq_km": number,
+    "weather_risk_factor": "string (LOW | MODERATE | CRITICAL)",
+    "action_plan_markdown": "string (bulleted checklist of tactical actions)"
+  },
   "equations": {
     "glide": "Formula used and numbers substituted, e.g., 'd_g = h * 4 = 1000 * 4 = 4.0km'",
     "drift": "Formula used and leeway calculation details",

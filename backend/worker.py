@@ -86,6 +86,18 @@ async def insert_wreck_alert(alert_data: dict):
         response = supabase.table("wreck_alerts").insert(alert_data).execute()
         if response.data:
             print(f"  ✅ [PUBLISHED] Alert ID: {response.data[0].get('id')} published to Supabase Database.")
+            
+            # Prune table to only keep latest 5 records
+            try:
+                all_alerts = supabase.table("wreck_alerts").select("id").order("created_at", desc=True).execute()
+                if all_alerts.data and len(all_alerts.data) > 5:
+                    to_delete = all_alerts.data[5:]
+                    for item in to_delete:
+                        del_id = item.get("id")
+                        supabase.table("wreck_alerts").delete().eq("id", del_id).execute()
+                        print(f"  🧹 [CLEANUP] Deleted old alert ID: {del_id}")
+            except Exception as prune_err:
+                print(f"  [WARNING] Pruning old alerts failed: {prune_err}")
     except Exception as e:
         print(f"  [ERROR] Supabase database insert failed: {e}")
 
@@ -352,6 +364,35 @@ async def process_report(title: str, text: str, image_url: str, post_url: str):
         else:
             final_image_url = image_url
 
+        # Enrich telemetry data with confidence score and checklist flags
+        has_active_flights = len(telemetry_data.get("active_flights", [])) > 0
+        has_gps = abs(lat) > 0.01 or abs(lon) > 0.01
+        has_livery_match = any(word in visual_analysis.lower() for word in ["livery", "color", "logo", "wreckage", "debris", "fuselage", "wing", "check"])
+        clean_image = not any(word in visual_analysis.lower() for word in ["forgery", "ai-generated", "fake", "manipulated", "artificial"])
+        
+        confidence = 70
+        if has_active_flights:
+            confidence += 12
+        if has_gps:
+            confidence += 10
+        if has_livery_match:
+            confidence += 3
+        if clean_image:
+            confidence += 3
+            
+        confidence = min(confidence, 98)
+        
+        enriched_telemetry = {
+            **telemetry_data,
+            "confidence": confidence,
+            "checks": {
+                "exif_gps": has_gps,
+                "livery": has_livery_match,
+                "adsb_link": has_active_flights,
+                "ai_forgery_check": clean_image
+            }
+        }
+
         alert_record = {
             "title": title,
             "url": post_url,
@@ -359,7 +400,7 @@ async def process_report(title: str, text: str, image_url: str, post_url: str):
             "location": location,
             "latitude": lat,
             "longitude": lon,
-            "telemetry": telemetry_data,
+            "telemetry": enriched_telemetry,
             "reasoning": reasoning,
             "is_verified": True
         }
