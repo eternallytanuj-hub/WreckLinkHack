@@ -15,11 +15,11 @@ echo "   - Backend: http://localhost:8000"
 echo "   - Frontend: http://localhost:3000 (or default Next.js port)"
 
 # Start backend API
-python3 backend/main.py &
+python3 -u backend/main.py &
 BACKEND_PID=$!
 
 # Start background worker daemon
-python3 backend/worker.py &
+python3 -u backend/worker.py &
 WORKER_PID=$!
 
 # Start frontend
