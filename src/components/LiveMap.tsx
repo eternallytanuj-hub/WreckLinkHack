@@ -942,7 +942,8 @@ export default function LiveMap() {
               attribution='&copy; NASA GIBS / EOSDIS'
               url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/${satelliteDateStr}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`}
               opacity={0.85}
-              maxZoom={9}
+              maxZoom={18}
+              maxNativeZoom={9}
             />
           )}
 
@@ -951,6 +952,8 @@ export default function LiveMap() {
               attribution='&copy; Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
               url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
               opacity={0.85}
+              maxZoom={20}
+              maxNativeZoom={18}
             />
           )}
 
