@@ -59,7 +59,11 @@ const getFlightIcon = (heading: number) => {
 };
 
 export default function AlertsMap({ latitude, longitude, locationName, activeFlights = [] }: AlertsMapProps) {
-  const mapCenter: [number, number] = [latitude || 20.0, longitude || 0.0];
+  const isValidNum = (v: any): boolean => typeof v === 'number' && !isNaN(v);
+  const mapCenter: [number, number] = [
+    isValidNum(latitude) ? latitude : 20.0,
+    isValidNum(longitude) ? longitude : 0.0
+  ];
 
   return (
     <div className="w-full h-full relative rounded-xl overflow-hidden border border-red-950/60 shadow-inner">
@@ -78,7 +82,7 @@ export default function AlertsMap({ latitude, longitude, locationName, activeFli
         <MapController center={mapCenter} />
 
         {/* Pulse red marker at crash location */}
-        {latitude !== 0 && longitude !== 0 && (
+        {isValidNum(latitude) && isValidNum(longitude) && latitude !== 0 && longitude !== 0 && (
           <Marker position={[latitude, longitude]} icon={getAlertIcon()}>
             <Popup>
               <div className="p-2 text-xs font-mono bg-slate-950/90 text-red-200 border border-red-950/40 rounded">
@@ -91,7 +95,7 @@ export default function AlertsMap({ latitude, longitude, locationName, activeFli
         )}
 
         {/* Correlated Active Flights in the Area */}
-        {activeFlights.map((f, idx) => {
+        {isValidNum(latitude) && isValidNum(longitude) && activeFlights.map((f, idx) => {
           // If flight doesn't have offset, offset it slightly for display relative to crash center
           const offsetLat = latitude + (idx === 0 ? 0.2 : idx === 1 ? -0.25 : 0.15);
           const offsetLon = longitude + (idx === 0 ? -0.3 : idx === 1 ? 0.2 : -0.2);

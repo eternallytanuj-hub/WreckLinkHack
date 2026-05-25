@@ -125,6 +125,30 @@ function getCoordinateDistance(lat1: number, lon1: number, lat2: number, lon2: n
   return R * c;
 }
 
+// Strict type-safe coordinates check to prevent Leaflet "Invalid LatLng object" crashes
+function isValidLatLng(coord: any): boolean {
+  if (!coord) return false;
+  if (Array.isArray(coord)) {
+    return coord.length === 2 && 
+      typeof coord[0] === 'number' && !isNaN(coord[0]) && 
+      typeof coord[1] === 'number' && !isNaN(coord[1]);
+  }
+  const lat = coord.latitude ?? coord.lat ?? coord.Latitude;
+  const lon = coord.longitude ?? coord.lon ?? coord.lng ?? coord.Longitude;
+  return typeof lat === 'number' && !isNaN(lat) && 
+    typeof lon === 'number' && !isNaN(lon);
+}
+
+// Safely convert any supported coordinates format into [latitude, longitude] array
+function toLatLngArray(coord: any): [number, number] {
+  if (Array.isArray(coord)) {
+    return [coord[0], coord[1]];
+  }
+  const lat = coord.latitude ?? coord.lat ?? coord.Latitude;
+  const lon = coord.longitude ?? coord.lon ?? coord.lng ?? coord.Longitude;
+  return [lat, lon];
+}
+
 const GLOBAL_STORM_CELLS = [
   { id: "storm-1", name: "NORTH ATLANTIC CYCLONE", lat: 53.5, lon: -35.0, radius: 450000, type: "Severe Turbulence / Heavy Rain" },
   { id: "storm-2", name: "BAY OF BENGAL MONSOON CELL", lat: 14.2, lon: 86.5, radius: 350000, type: "Thunderstorms / Wind Shear" },
@@ -717,8 +741,13 @@ export default function LiveMap() {
       });
       
       setNearestVessel({
+        mmsi: 367119280,
         name: "HOUSTON PORT PILOT #12",
         type: "Tug / Pilot Vessel",
+        typeCode: 52,
+        latitude: 29.7422,
+        longitude: -94.7038,
+        speed: 8.5,
         distance: 1.8
       });
       
@@ -779,8 +808,13 @@ export default function LiveMap() {
       });
       
       setNearestVessel({
+        mmsi: 413809000,
         name: "KRI RIGEL-933",
         type: "Oceanographic Research / Naval Vessel",
+        typeCode: 35,
+        latitude: -5.9420,
+        longitude: 106.5547,
+        speed: 12.8,
         distance: 4.2
       });
       
@@ -1178,9 +1212,9 @@ export default function LiveMap() {
           )}
 
           {/* Render Ground Truth marker if Case Study is simulated */}
-          {simulationData && simulationData.is_case_study && simulationData.ground_truth && (
+          {simulationData && simulationData.is_case_study && isValidLatLng(simulationData.ground_truth) && (
             <Marker
-              position={simulationData.ground_truth}
+              position={toLatLngArray(simulationData.ground_truth)}
               icon={L.divIcon({
                 className: "custom-ground-truth-icon",
                 html: `
@@ -1212,11 +1246,12 @@ export default function LiveMap() {
 
           {/* Renders all filtered tracked flights */}
           {filteredFlights.map((flight) => {
+            if (!isValidLatLng(flight)) return null;
             const isAtRisk = isFlightAtRisk(flight);
             return (
               <Marker
                 key={flight.icao24}
-                position={[flight.latitude, flight.longitude]}
+                position={toLatLngArray(flight)}
                 icon={getAirplaneIcon(
                   flight.icao24,
                   flight.heading,
@@ -1247,26 +1282,29 @@ export default function LiveMap() {
           })}
 
           {/* Render Historical Risk Zones */}
-          {riskZones.map((zone) => (
-            <Marker
-              key={zone.id || `${zone.Latitude}-${zone.Longitude}`}
-              position={[zone.Latitude, zone.Longitude]}
-              icon={getRiskZoneIcon(selectedRiskZone?.id === zone.id)}
-              eventHandlers={{
-                click: () => {
-                  setSelectedRiskZone(zone);
-                  setSelectedFlight(null);
-                  setSimulationData(null);
-                  setViewTarget({ center: [zone.Latitude, zone.Longitude], zoom: 6 });
-                },
-              }}
-            />
-          ))}
+          {riskZones.map((zone) => {
+            if (typeof zone.Latitude !== "number" || typeof zone.Longitude !== "number" || isNaN(zone.Latitude) || isNaN(zone.Longitude)) return null;
+            return (
+              <Marker
+                key={zone.id || `${zone.Latitude}-${zone.Longitude}`}
+                position={[zone.Latitude, zone.Longitude]}
+                icon={getRiskZoneIcon(selectedRiskZone?.id === zone.id)}
+                eventHandlers={{
+                  click: () => {
+                    setSelectedRiskZone(zone);
+                    setSelectedFlight(null);
+                    setSimulationData(null);
+                    setViewTarget({ center: [zone.Latitude, zone.Longitude], zoom: 6 });
+                  },
+                }}
+              />
+            );
+          })}
 
           {/* Render Selected Flight Path History */}
           {selectedFlight && selectedFlightPath.length > 0 && (
             <Polyline
-              positions={selectedFlightPath}
+              positions={selectedFlightPath.filter(pt => isValidLatLng(pt)).map(pt => toLatLngArray(pt))}
               pathOptions={{
                 color: "#ef4444",
                 weight: 3.5,
@@ -1278,45 +1316,48 @@ export default function LiveMap() {
           )}
 
           {/* Render Weather Hazard Storm Cells */}
-          {showWeatherLayer && GLOBAL_STORM_CELLS.map((cell) => (
-            <React.Fragment key={cell.id}>
-              <Circle
-                center={[cell.lat, cell.lon]}
-                radius={cell.radius}
-                pathOptions={{
-                  color: "#ea580c",
-                  fillColor: "#f97316",
-                  fillOpacity: 0.12,
-                  weight: 1.5,
-                  dashArray: "4, 6"
-                }}
-              />
-              <Marker
-                position={[cell.lat, cell.lon]}
-                icon={getStormIcon()}
-              >
-                <Popup>
-                  <div className="p-2.5 font-mono text-xs bg-[#050101]/95 text-slate-200 border border-orange-950/80 rounded-lg shadow-xl space-y-1.5 select-none">
-                    <span className="block font-bold text-orange-500 border-b border-red-950/40 pb-1">{cell.name}</span>
-                    <span className="block text-[9px] text-red-400 uppercase font-bold">HAZARD LEVEL: CRITICAL</span>
-                    <div className="pt-1 font-sans text-slate-300">
-                      {cell.type}
+          {showWeatherLayer && GLOBAL_STORM_CELLS.map((cell) => {
+            if (typeof cell.lat !== "number" || typeof cell.lon !== "number" || isNaN(cell.lat) || isNaN(cell.lon)) return null;
+            return (
+              <React.Fragment key={cell.id}>
+                <Circle
+                  center={[cell.lat, cell.lon]}
+                  radius={cell.radius}
+                  pathOptions={{
+                    color: "#ea580c",
+                    fillColor: "#f97316",
+                    fillOpacity: 0.12,
+                    weight: 1.5,
+                    dashArray: "4, 6"
+                  }}
+                />
+                <Marker
+                  position={[cell.lat, cell.lon]}
+                  icon={getStormIcon()}
+                >
+                  <Popup>
+                    <div className="p-2.5 font-mono text-xs bg-[#050101]/95 text-slate-200 border border-orange-950/80 rounded-lg shadow-xl space-y-1.5 select-none">
+                      <span className="block font-bold text-orange-500 border-b border-red-950/40 pb-1">{cell.name}</span>
+                      <span className="block text-[9px] text-red-400 uppercase font-bold">HAZARD LEVEL: CRITICAL</span>
+                      <div className="pt-1 font-sans text-slate-300">
+                        {cell.type}
+                      </div>
                     </div>
-                  </div>
-                </Popup>
-              </Marker>
-            </React.Fragment>
-          ))}
+                  </Popup>
+                </Marker>
+              </React.Fragment>
+            );
+          })}
 
           {/* Render Crash Simulation overlays if active */}
           {simulationData && (
             <>
               {/* 1. Glide path line (Flight initial coord -> Impact Point) */}
-              {selectedFlight && (
+              {selectedFlight && isValidLatLng(selectedFlight) && isValidLatLng(simulationData.impact_point) && (
                 <Polyline 
                   positions={[
-                    [selectedFlight.latitude, selectedFlight.longitude],
-                    simulationData.impact_point
+                    toLatLngArray(selectedFlight),
+                    toLatLngArray(simulationData.impact_point)
                   ]}
                   pathOptions={{
                     color: "#ef4444",
@@ -1329,119 +1370,131 @@ export default function LiveMap() {
 
               {/* 2. Debris drift path line (Impact Point -> Drift Center or 24/48/72h trajectory) */}
               {simulationData.drift_trajectory ? (
-                <Polyline 
-                  positions={[
-                    simulationData.impact_point,
-                    ...simulationData.drift_trajectory.map((step: any) => step.coordinates)
-                  ]}
-                  pathOptions={{
-                    color: "#fbbf24",
-                    dashArray: "4, 6",
-                    weight: 3.5,
-                    opacity: 0.9
-                  }}
-                />
+                isValidLatLng(simulationData.impact_point) && 
+                simulationData.drift_trajectory.every((step: any) => isValidLatLng(step.coordinates)) && (
+                  <Polyline 
+                    positions={[
+                      toLatLngArray(simulationData.impact_point),
+                      ...simulationData.drift_trajectory.map((step: any) => toLatLngArray(step.coordinates))
+                    ]}
+                    pathOptions={{
+                      color: "#fbbf24",
+                      dashArray: "4, 6",
+                      weight: 3.5,
+                      opacity: 0.9
+                    }}
+                  />
+                )
               ) : (
-                <Polyline 
-                  positions={[
-                    simulationData.impact_point,
-                    simulationData.drift_point
-                  ]}
-                  pathOptions={{
-                    color: "#fbbf24",
-                    dashArray: "4, 4",
-                    weight: 2,
-                    opacity: 0.8
-                  }}
-                />
+                isValidLatLng(simulationData.impact_point) && isValidLatLng(simulationData.drift_point) && (
+                  <Polyline 
+                    positions={[
+                      toLatLngArray(simulationData.impact_point),
+                      toLatLngArray(simulationData.drift_point)
+                    ]}
+                    pathOptions={{
+                      color: "#fbbf24",
+                      dashArray: "4, 4",
+                      weight: 2,
+                      opacity: 0.8
+                    }}
+                  />
+                )
               )}
 
               {/* 3. Impact Point (PIP) Marker */}
-              <Marker 
-                position={simulationData.impact_point}
-                icon={getImpactIcon()}
-              />
+              {isValidLatLng(simulationData.impact_point) && (
+                <Marker 
+                  position={toLatLngArray(simulationData.impact_point)}
+                  icon={getImpactIcon()}
+                />
+              )}
 
               {/* 4. Drift Steps or Drift Center (DSAC) Marker */}
               {simulationData.drift_trajectory ? (
-                simulationData.drift_trajectory.map((step: any, idx: number) => (
-                  <React.Fragment key={idx}>
-                    {/* Expanding uncertainty search grid circles (in meters) */}
+                simulationData.drift_trajectory.map((step: any, idx: number) => {
+                  if (!isValidLatLng(step.coordinates)) return null;
+                  return (
+                    <React.Fragment key={idx}>
+                      {/* Expanding uncertainty search grid circles (in meters) */}
+                      <Circle 
+                        center={toLatLngArray(step.coordinates)}
+                        radius={step.uncertainty_radius_km * 1000}
+                        pathOptions={{
+                          color: idx === 0 ? "#fbbf24" : idx === 1 ? "#f59e0b" : "#ea580c",
+                          fillColor: idx === 0 ? "#fbbf24" : idx === 1 ? "#f59e0b" : "#ea580c",
+                          fillOpacity: 0.06,
+                          dashArray: "5, 5",
+                          weight: 1.5
+                        }}
+                      />
+                      {/* Floating coordinate ping marker */}
+                      <Marker 
+                        position={toLatLngArray(step.coordinates)}
+                        icon={getDriftIconForTime(step.time_hours)}
+                      >
+                        <Popup>
+                          <div className="p-3.5 font-mono text-[10px] bg-[#0c0303]/95 text-slate-200 border border-red-950/80 rounded-lg shadow-xl space-y-1.5 select-none min-w-[200px]">
+                            <span className="block font-bold text-amber-400 border-b border-red-950/40 pb-1 font-mono uppercase">PROJECTED DEBRIS STEP: +{step.time_hours}H</span>
+                            <div className="space-y-1 text-slate-300">
+                              <div className="flex justify-between">
+                                <span>DRIFT RANGE:</span>
+                                <span className="text-white font-bold">{step.distance_km} km</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>UNCERTAINTY:</span>
+                                <span className="text-white font-bold">±{step.uncertainty_radius_km} km</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>OCEAN CURRENT:</span>
+                                <span className="text-cyan-400 font-bold">{step.current_speed_ms} m/s</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>CURRENT DIR:</span>
+                                <span className="text-cyan-400 font-bold">{step.current_heading}°</span>
+                              </div>
+                            </div>
+                            <div className="text-[9px] text-slate-500 border-t border-red-950/20 pt-1 text-right">
+                              COORD: {step.coordinates[0].toFixed(4)}, {step.coordinates[1].toFixed(4)}
+                            </div>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    </React.Fragment>
+                  );
+                })
+              ) : (
+                isValidLatLng(simulationData.drift_point) && (
+                  <>
+                    <Marker 
+                      position={toLatLngArray(simulationData.drift_point)}
+                      icon={getDriftIcon()}
+                    />
                     <Circle 
-                      center={step.coordinates}
-                      radius={step.uncertainty_radius_km * 1000}
+                      center={toLatLngArray(simulationData.drift_point)}
+                      radius={5000} // 5km search zone
                       pathOptions={{
-                        color: idx === 0 ? "#fbbf24" : idx === 1 ? "#f59e0b" : "#ea580c",
-                        fillColor: idx === 0 ? "#fbbf24" : idx === 1 ? "#f59e0b" : "#ea580c",
-                        fillOpacity: 0.06,
+                        color: "#fbbf24",
+                        fillColor: "#fbbf24",
+                        fillOpacity: 0.1,
                         dashArray: "5, 5",
                         weight: 1.5
                       }}
                     />
-                    {/* Floating coordinate ping marker */}
-                    <Marker 
-                      position={step.coordinates}
-                      icon={getDriftIconForTime(step.time_hours)}
-                    >
-                      <Popup>
-                        <div className="p-3.5 font-mono text-[10px] bg-[#0c0303]/95 text-slate-200 border border-red-950/80 rounded-lg shadow-xl space-y-1.5 select-none min-w-[200px]">
-                          <span className="block font-bold text-amber-400 border-b border-red-950/40 pb-1 font-mono uppercase">PROJECTED DEBRIS STEP: +{step.time_hours}H</span>
-                          <div className="space-y-1 text-slate-300">
-                            <div className="flex justify-between">
-                              <span>DRIFT RANGE:</span>
-                              <span className="text-white font-bold">{step.distance_km} km</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>UNCERTAINTY:</span>
-                              <span className="text-white font-bold">±{step.uncertainty_radius_km} km</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>OCEAN CURRENT:</span>
-                              <span className="text-cyan-400 font-bold">{step.current_speed_ms} m/s</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>CURRENT DIR:</span>
-                              <span className="text-cyan-400 font-bold">{step.current_heading}°</span>
-                            </div>
-                          </div>
-                          <div className="text-[9px] text-slate-500 border-t border-red-950/20 pt-1 text-right">
-                            COORD: {step.coordinates[0].toFixed(4)}, {step.coordinates[1].toFixed(4)}
-                          </div>
-                        </div>
-                      </Popup>
-                    </Marker>
-                  </React.Fragment>
-                ))
-              ) : (
-                <>
-                  <Marker 
-                    position={simulationData.drift_point}
-                    icon={getDriftIcon()}
-                  />
-                  <Circle 
-                    center={simulationData.drift_point}
-                    radius={5000} // 5km search zone
-                    pathOptions={{
-                      color: "#fbbf24",
-                      fillColor: "#fbbf24",
-                      fillOpacity: 0.1,
-                      dashArray: "5, 5",
-                      weight: 1.5
-                    }}
-                  />
-                </>
+                  </>
+                )
               )}
             </>
           )}
 
           {/* Render Nearest Vessel connection and marker */}
-          {selectedFlight && nearestVessel && (
+          {selectedFlight && nearestVessel && isValidLatLng(selectedFlight) && isValidLatLng(nearestVessel) && (
             <>
               {/* Proximity link line between Flight and nearest Ship */}
               <Polyline
                 positions={[
-                  [selectedFlight.latitude, selectedFlight.longitude],
-                  [nearestVessel.latitude, nearestVessel.longitude]
+                  toLatLngArray(selectedFlight),
+                  toLatLngArray(nearestVessel)
                 ]}
                 pathOptions={{
                   color: "#10b981", // Emerald green
@@ -1453,7 +1506,7 @@ export default function LiveMap() {
               
               {/* Vessel position marker */}
               <Marker
-                position={[nearestVessel.latitude, nearestVessel.longitude]}
+                position={toLatLngArray(nearestVessel)}
                 icon={getShipIcon(nearestVessel.typeCode)}
               >
                 <Popup>
@@ -1462,9 +1515,9 @@ export default function LiveMap() {
                     <span className="block text-[10px] text-slate-400 uppercase font-semibold">{nearestVessel.type}</span>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1">
                       <span className="text-slate-400">MMSI:</span>
-                      <span className="text-white font-bold">{nearestVessel.mmsi}</span>
+                      <span className="text-white font-bold">{nearestVessel.mmsi || "N/A"}</span>
                       <span className="text-slate-400">SPEED:</span>
-                      <span className="text-white font-bold">{nearestVessel.speed} kts</span>
+                      <span className="text-white font-bold">{nearestVessel.speed ? `${nearestVessel.speed} kts` : "0 kts"}</span>
                       <span className="text-slate-400">RANGE:</span>
                       <span className="text-amber-300 font-bold">{nearestVessel.distance} km</span>
                     </div>
