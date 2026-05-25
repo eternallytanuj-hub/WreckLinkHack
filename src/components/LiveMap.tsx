@@ -186,8 +186,9 @@ export default function LiveMap() {
   const [selectedFlightPath, setSelectedFlightPath] = useState<[number, number][]>([]);
 
   // Satellite layers state
-  const [satelliteLayerType, setSatelliteLayerType] = useState<"off" | "daily" | "highres">("off");
+  const [satelliteLayerType, setSatelliteLayerType] = useState<"off" | "daily" | "highres" | "bathymetry">("off");
   const [satelliteDateStr, setSatelliteDateStr] = useState<string>("");
+  const [hydrophoneDepth, setHydrophoneDepth] = useState<number>(150);
   useEffect(() => {
     const date = new Date();
     date.setDate(date.getDate() - 2); // 2 days ago to ensure complete NASA global composites
@@ -197,79 +198,141 @@ export default function LiveMap() {
   // Dynamic Acoustic Ray-Tracing calculations
   const surfaceTemp = selectedFlightWeather?.temp ?? 15.0;
   const acousticData = React.useMemo(() => {
-    const maxDepth = 2000;
-    const stepSize = 25; // 25m intervals
-    const salinity = 35.0;
+    const caseId = simulationData?.case_study_id;
     
-    // Generate SSP
+    // Determine maximum depth, ocean salinity column, and seafloor profile by context
+    const maxDepth = caseId === "atlas" ? 15 
+                     : caseId === "sriwijaya" ? 60 
+                     : caseId === "yeti" ? 0 // Terrestrial
+                     : 2000; // Deep ocean (capped at 2000m for visualization)
+                     
+    const salinity = caseId === "atlas" ? 22.0 // low salinity in Trinity Bay
+                     : caseId === "sriwijaya" ? 31.5 // tropical shallow salinity in Java Sea
+                     : 34.7; // standard deep ocean salinity
+                     
+    const stepSize = caseId === "atlas" ? 0.25 
+                     : caseId === "sriwijaya" ? 1.0
+                     : 25.0; // step intervals
+                     
+    const getSeafloorDepth = (xVal: number): number => {
+      if (caseId === "atlas") return 12.0; // Trinity Bay shallow bed at 12m
+      if (caseId === "sriwijaya") return 52.0; // Java Sea shallow bed at 52m
+      if (caseId === "yeti") return 0.0;
+      
+      // Deep sea seamount topography modeling
+      const baseDepth = 2000;
+      const seamountCenter = 3200;
+      const seamountWidth = 900;
+      const seamountHeight = 1100; // Rises from 2000m to 900m depth
+      
+      const offset = seamountHeight * Math.exp(-Math.pow((xVal - seamountCenter) / seamountWidth, 2));
+      return baseDepth - offset;
+    };
+    
+    // Generate Sound Speed Profile (SSP) using Mackenzie (1981) standard equation
     const ssp: { depth: number; speed: number; temp: number }[] = [];
-    for (let d = 0; d <= maxDepth; d += stepSize) {
-      let temp = 4.0;
-      if (d < 100) {
-        temp = surfaceTemp;
-      } else if (d < 800) {
-        temp = 4.0 + (surfaceTemp - 4.0) * Math.exp(-(d - 100) / 250);
-      } else {
-        temp = 2.0 + 2.0 * Math.exp(-(d - 800) / 1000);
-      }
-      
-      const c = 1448.96 + 
-                4.591 * temp - 
-                0.05304 * temp * temp + 
-                2.374e-4 * Math.pow(temp, 3) + 
-                1.340 * (salinity - 35) + 
-                0.0163 * d + 
-                1.675e-7 * d * d;
-      ssp.push({ depth: d, speed: c, temp });
-    }
-    
-    // Ray trace
-    const rays: { angle: number; path: [number, number][] }[] = [];
-    const launchAngles = [-85, -75, -60, -45, -30, -15, 0, 15, 30, 45, 60, 75, 85];
-    const c_seafloor = ssp[ssp.length - 1].speed;
-    
-    for (const launchAngleDeg of launchAngles) {
-      const path: [number, number][] = [];
-      let x = 0;
-      let z = maxDepth;
-      
-      const theta_0 = (90 - launchAngleDeg) * Math.PI / 180;
-      const initial_cos = Math.cos(theta_0);
-      
-      path.push([x, z]);
-      
-      for (let idx = ssp.length - 2; idx >= 0; idx--) {
-        const target_depth = ssp[idx].depth;
-        const c_current = ssp[idx].speed;
-        
-        const cos_theta = c_current * (initial_cos / c_seafloor);
-        if (Math.abs(cos_theta) > 1.0) {
-          // Total reflection
-          break;
+    if (maxDepth > 0) {
+      for (let d = 0; d <= maxDepth; d += stepSize) {
+        let temp = 4.0;
+        if (caseId === "atlas") {
+          temp = surfaceTemp; // uniform temperature in shallow bay
+        } else if (caseId === "sriwijaya") {
+          // tropical shallow gradient
+          temp = surfaceTemp - (surfaceTemp - 24.0) * (d / maxDepth);
+        } else {
+          // deep ocean thermocline
+          if (d < 100) {
+            temp = surfaceTemp;
+          } else if (d < 800) {
+            temp = 4.0 + (surfaceTemp - 4.0) * Math.exp(-(d - 100) / 220);
+          } else {
+            temp = 2.0 + 2.0 * Math.exp(-(d - 800) / 800);
+          }
         }
         
-        const current_angle = Math.acos(cos_theta);
-        const dz = stepSize;
-        const dx = dz / Math.tan(current_angle);
-        
-        x += Math.abs(dx) * Math.sign(initial_cos);
-        z = target_depth;
-        
-        path.push([x, z]);
+        // Mackenzie Sound Speed equation
+        const c = 1448.96 + 
+                  4.591 * temp - 
+                  0.05304 * temp * temp + 
+                  2.374e-4 * Math.pow(temp, 3) + 
+                  1.340 * (salinity - 35) + 
+                  0.0163 * d + 
+                  1.675e-7 * d * d + 
+                  1.025e-2 * temp * (salinity - 35) - 
+                  7.139e-13 * temp * Math.pow(d, 3);
+                  
+        ssp.push({ depth: d, speed: c, temp });
       }
-      rays.push({ angle: launchAngleDeg, path });
     }
     
+    // Ray Trace calculations using Snell's Law and Terrain collision checking
+    const rays: { angle: number; path: [number, number][]; collides: boolean; collisionX?: number; collisionY?: number }[] = [];
+    const launchAngles = [-85, -70, -55, -40, -25, -10, 0, 10, 25, 40, 55, 70, 85];
+    
+    if (ssp.length > 1) {
+      const c_seafloor = ssp[ssp.length - 1].speed;
+      
+      for (const launchAngleDeg of launchAngles) {
+        const path: [number, number][] = [];
+        let x = 0;
+        let z = maxDepth;
+        let collides = false;
+        let collisionX = 0;
+        let collisionY = 0;
+        
+        const theta_0 = (90 - launchAngleDeg) * Math.PI / 180;
+        const initial_cos = Math.cos(theta_0);
+        
+        path.push([x, z]);
+        
+        for (let idx = ssp.length - 2; idx >= 0; idx--) {
+          const target_depth = ssp[idx].depth;
+          const c_current = ssp[idx].speed;
+          
+          const cos_theta = c_current * (initial_cos / c_seafloor);
+          if (Math.abs(cos_theta) > 1.0) {
+            // Total refraction/reflection
+            break;
+          }
+          
+          const current_angle = Math.acos(cos_theta);
+          const dz = stepSize;
+          const dx = dz / Math.tan(current_angle);
+          
+          x += Math.abs(dx) * Math.sign(initial_cos);
+          z = target_depth;
+          
+          // Verify terrain intersection
+          const currentSeafloor = getSeafloorDepth(x);
+          if (z >= currentSeafloor) {
+            collides = true;
+            collisionX = x;
+            collisionY = currentSeafloor;
+            path.push([x, currentSeafloor]);
+            break;
+          }
+          
+          path.push([x, z]);
+        }
+        rays.push({ angle: launchAngleDeg, path, collides, collisionX, collisionY });
+      }
+    }
+    
+    // Find SOFAR channel depth (where sound speed is minimum)
     let minSpeedIdx = 0;
     for (let i = 0; i < ssp.length; i++) {
       if (ssp[i].speed < ssp[minSpeedIdx].speed) {
         minSpeedIdx = i;
       }
     }
-    const sofarDepth = ssp[minSpeedIdx].depth;
+    const sofarDepth = ssp.length > 0 ? ssp[minSpeedIdx].depth : 0;
     
-    return { ssp, rays, sofarDepth };
-  }, [surfaceTemp]);
+    // Calculate Terrain Obstruction Index
+    const blockedRays = rays.filter(r => r.collides).length;
+    const obstructionIndex = rays.length > 0 ? Math.round((blockedRays / rays.length) * 100) : 0;
+    
+    return { ssp, rays, sofarDepth, maxDepth, salinity, getSeafloorDepth, obstructionIndex };
+  }, [surfaceTemp, simulationData]);
 
   // Live Warnings Feed state
   const [signalLossFeed, setSignalLossFeed] = useState<any[]>([
@@ -685,6 +748,7 @@ export default function LiveMap() {
     setNearestVessel(null);
     
     if (caseId === "atlas") {
+      setHydrophoneDepth(5); // Reset tow depth for Trinity Bay shallow water
       const flight: Flight = {
         icao24: "a3591f",
         callsign: "GTI3591",
@@ -752,6 +816,7 @@ export default function LiveMap() {
       });
       
     } else if (caseId === "sriwijaya") {
+      setHydrophoneDepth(20); // Reset tow depth for Java Sea shallow basin
       const flight: Flight = {
         icao24: "ab0182",
         callsign: "SJY182",
@@ -819,6 +884,7 @@ export default function LiveMap() {
       });
       
     } else if (caseId === "yeti") {
+      setHydrophoneDepth(0); // Reset for terrestrial Pokhara gorge
       const flight: Flight = {
         icao24: "ac0691",
         callsign: "NYT691",
@@ -882,6 +948,7 @@ export default function LiveMap() {
       setSelectedFlight(match);
       setSelectedRiskZone(null);
       setSelectedFlightPath(generateSimulatedPath(match));
+      setHydrophoneDepth(150); // Default to deep water sensor depth
       setViewTarget({ center: [match.latitude, match.longitude], zoom: 6 });
     }
   };
@@ -890,6 +957,7 @@ export default function LiveMap() {
   const runCrashSimulation = async (flight: Flight) => {
     setSimulating(true);
     setSimulationData(null);
+    setHydrophoneDepth(150); // Reset tow depth for standard deep ocean
     try {
       const res = await fetch("/api/simulate-crash", {
         method: "POST",
@@ -1036,7 +1104,7 @@ export default function LiveMap() {
           
           <div className="flex flex-col gap-1.5 text-xs pt-1.5">
             <span className="text-slate-300 font-semibold tracking-wide block">Satellite Imagery Layer</span>
-            <div className="grid grid-cols-3 gap-1">
+            <div className="grid grid-cols-4 gap-1">
               <button
                 onClick={() => setSatelliteLayerType("off")}
                 className={`py-1 rounded font-mono text-[8px] font-bold border transition-all ${
@@ -1066,6 +1134,16 @@ export default function LiveMap() {
                 }`}
               >
                 HIGH-RES (ESRI)
+              </button>
+              <button
+                onClick={() => setSatelliteLayerType("bathymetry")}
+                className={`py-1 rounded font-mono text-[8px] font-bold border transition-all ${
+                  satelliteLayerType === "bathymetry"
+                    ? "bg-blue-950/40 border-blue-800/60 text-blue-400"
+                    : "bg-slate-950/40 border-red-950/20 text-slate-500 hover:text-slate-400"
+                }`}
+              >
+                BATHY (ESRI)
               </button>
             </div>
           </div>
@@ -1211,6 +1289,23 @@ export default function LiveMap() {
             />
           )}
 
+          {satelliteLayerType === "bathymetry" && (
+            <>
+              <TileLayer
+                attribution='&copy; Esri, GEBCO, NOAA, National Geographic, DeLorme, HERE, Geonames.org, and other contributors'
+                url="https://services.arcgisonline.com/arcgis/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}"
+                opacity={0.9}
+                maxZoom={16}
+              />
+              <TileLayer
+                attribution='&copy; Esri, GEBCO, NOAA, and other contributors'
+                url="https://services.arcgisonline.com/arcgis/rest/services/Ocean/World_Ocean_Reference/MapServer/tile/{z}/{y}/{x}"
+                opacity={0.8}
+                maxZoom={16}
+              />
+            </>
+          )}
+
           {/* Render Ground Truth marker if Case Study is simulated */}
           {simulationData && simulationData.is_case_study && isValidLatLng(simulationData.ground_truth) && (
             <Marker
@@ -1263,6 +1358,7 @@ export default function LiveMap() {
                     setSelectedFlight(flight);
                     setSelectedRiskZone(null);
                     setSelectedFlightPath(generateSimulatedPath(flight));
+                    setHydrophoneDepth(150); // Default to deep water sensor depth
                     setViewTarget({ center: [flight.latitude, flight.longitude], zoom: 5 });
                   },
                 }}
@@ -2037,139 +2133,270 @@ export default function LiveMap() {
 
                 </div>
               </>
+
             ) : (
               <>
                 {/* Tab 3: Sonar Ray-Tracing & Acoustics */}
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-5 font-mono text-xs items-stretch text-left">
-                  {/* LEFT COLUMN: SVG Graph (Left: SSP, Right: Ray Trace) */}
-                  <div className="md:col-span-8 bg-[#090101]/50 p-4 rounded-lg border border-red-950/40 flex flex-col justify-between">
-                    <span className="block text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-2">
-                      🔊 2D UNDERSEA ACOUSTIC RAY-TRACING & REFRACTION WAVEFRONT MODEL
-                    </span>
-                    <div className="w-full bg-[#050101]/60 rounded border border-red-950/20 p-2 overflow-hidden flex items-center justify-center">
-                      {(() => {
-                        const { ssp, rays } = acousticData;
-                        
-                        const sspX = (speed: number) => {
-                          return 40 + ((speed - 1460) * 140) / 80;
-                        };
-                        const sspY = (depth: number) => {
-                          return 20 + (depth * 180) / 2000;
-                        };
-                        
-                        const rayX = (rx: number) => {
-                          return 240 + Math.min(500, (rx * 500) / 6000);
-                        };
-                        const rayY = (rz: number) => {
-                          return 20 + (rz * 180) / 2000;
-                        };
-                        
-                        const sspPath = ssp.map(p => `${sspX(p.speed)},${sspY(p.depth)}`).join(" L ");
-                        
-                        return (
-                          <svg viewBox="0 0 760 230" className="w-full h-auto select-none font-mono">
-                            <rect x="30" y="20" width="160" height="180" fill="#000000" fillOpacity="0.4" stroke="#450a0a" strokeOpacity="0.3" />
-                            <rect x="230" y="20" width="510" height="180" fill="#000000" fillOpacity="0.4" stroke="#450a0a" strokeOpacity="0.3" />
-                            
-                            {[0, 500, 1000, 1500, 2000].map(d => {
-                              const y = sspY(d);
-                              return (
-                                <g key={d} opacity="0.6">
-                                  <line x1="25" y1={y} x2="30" y2={y} stroke="#f87171" strokeWidth="0.5" />
-                                  <line x1="225" y1={y} x2="230" y2={y} stroke="#f87171" strokeWidth="0.5" />
-                                  <text x="5" y={y + 3} fill="#94a3b8" fontSize="8" textAnchor="start">{d}m</text>
-                                </g>
-                              );
-                            })}
-                            
-                            <rect x="230" y={sspY(600)} width="510" height={sspY(1000) - sspY(600)} fill="#22c55e" fillOpacity="0.08" />
-                            <line x1="230" y1={sspY(800)} x2="740" y2={sspY(800)} stroke="#22c55e" strokeDasharray="3,3" strokeOpacity="0.5" strokeWidth="1" />
-                            <text x="240" y={sspY(800) - 4} fill="#22c55e" fontSize="7" opacity="0.6" fontWeight="bold">SOFAR DUCT AXIS (~800m)</text>
-                            
-                            <path d={`M 230,20 L 740,20 L 740,${sspY(120)} Z`} fill="#ef4444" fillOpacity="0.1" />
-                            <text x="630" y="32" fill="#ef4444" fontSize="7" opacity="0.7" fontWeight="bold">SHADOW ZONE (BLIND)</text>
-                            
-                            <path d={`M ${sspPath}`} fill="none" stroke="#3b82f6" strokeWidth="2" />
-                            {[1460, 1500, 1540].map(v => {
-                              const x = sspX(v);
-                              return (
-                                <g key={v} opacity="0.6">
-                                  <line x1={x} y1="200" x2={x} y2="205" stroke="#f87171" strokeWidth="0.5" />
-                                  <text x={x} y="213" fill="#94a3b8" fontSize="7" textAnchor="middle">{v} m/s</text>
-                                </g>
-                              );
-                            })}
-                            <text x="110" y="12" fill="#3b82f6" fontSize="8" textAnchor="middle" fontWeight="bold">SOUND SPEED PROFILE</text>
-                            
-                            {rays.map((ray, rIdx) => {
-                              const rayPathStr = ray.path.map(pt => `${rayX(pt[0])},${rayY(pt[1])}`).join(" L ");
-                              return (
-                                <path 
-                                  key={rIdx} 
-                                  d={`M ${rayPathStr}`} 
-                                  fill="none" 
-                                  stroke={Math.abs(ray.angle) <= 30 ? "#22c55e" : "#06b6d4"} 
-                                  strokeWidth="0.8" 
-                                  strokeOpacity={Math.abs(ray.angle) <= 30 ? "0.85" : "0.6"} 
-                                />
-                              );
-                            })}
-                            
-                            <circle cx={rayX(0)} cy={rayY(2000)} r="5" fill="#f97316" className="animate-pulse" />
-                            <circle cx={rayX(0)} cy={rayY(2000)} r="1.5" fill="#ffffff" />
-                            <text x={rayX(0) + 8} y={rayY(2000) - 2} fill="#f97316" fontSize="8" fontWeight="bold">BLACK BOX (37.5 kHz)</text>
-                            
-                            <text x="485" y="12" fill="#06b6d4" fontSize="8" textAnchor="middle" fontWeight="bold">ACOUSTIC RAY REFRACTION PATHS (SNELL'S LAW)</text>
-                          </svg>
-                        );
-                      })()}
-                    </div>
+                {acousticData.maxDepth === 0 ? (
+                  <div className="w-full bg-[#050101]/95 border border-red-900/60 p-8 rounded-xl text-center space-y-4 font-mono select-none my-6">
+                    <ShieldAlert className="w-12 h-12 text-red-500 mx-auto animate-pulse" />
+                    <h3 className="text-sm font-bold text-red-400 uppercase tracking-widest">
+                      🔊 TERRESTRIAL ACOUSTIC SHADOW BLOCK
+                    </h3>
+                    <p className="text-xs text-slate-300 font-sans leading-relaxed max-w-lg mx-auto">
+                      Acoustic sonar wave-front modeling is mathematically invalid in mountainous, high-altitude terrestrial environments (Pokhara Seti Gorge). 
+                      Please select a maritime crash case study (such as <strong className="text-amber-400">Atlas Air 3591</strong> or <strong className="text-cyan-400">Sriwijaya Air 182</strong>) to execute standard bathymetric ray tracing.
+                    </p>
                   </div>
-
-                  {/* RIGHT COLUMN: Sonar Tactical Advisories */}
-                  <div className="md:col-span-4 bg-slate-950/40 p-4 rounded-lg border border-red-950/40 flex flex-col justify-between space-y-3 text-left select-text">
-                    <div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-5 font-mono text-xs items-stretch text-left">
+                    {/* LEFT COLUMN: SVG Graph (Left: sound speed profile, Right: ray tracer chart) */}
+                    <div className="md:col-span-8 bg-[#090101]/50 p-4 rounded-lg border border-red-950/40 flex flex-col justify-between">
                       <span className="block text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-2">
-                        🔊 DEEP-SEA ACOUSTIC ADVISORY REPORT
+                        🔊 2D UNDERSEA ACOUSTIC RAY-TRACING & REFRACTION WAVEFRONT MODEL (MACKENZIE RESOLUTION)
                       </span>
-                      <div className="space-y-2 text-[10px] text-slate-300 font-mono">
-                        <div className="flex justify-between border-b border-cyan-950/40 pb-1.5">
-                          <span>BEACON FREQUENCY:</span>
-                          <span className="text-cyan-400 font-bold">37.5 kHz (Pulsed)</span>
-                        </div>
-                        <div className="flex justify-between border-b border-cyan-950/40 pb-1.5">
-                          <span>THERMOCLINE DEPTH:</span>
-                          <span className="text-white font-bold">75m - 600m</span>
-                        </div>
-                        <div className="flex justify-between border-b border-cyan-950/40 pb-1.5">
-                          <span>SOFAR DUCT AXIS:</span>
-                          <span className="text-green-400 font-bold">~800 m depth</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>SURFACE SHADOW RANGE:</span>
-                          <span className="text-red-400 font-bold">Extending &gt; 1.8 km</span>
-                        </div>
+                      <div className="w-full bg-[#050101]/60 rounded border border-red-950/20 p-2 overflow-hidden flex items-center justify-center">
+                        {(() => {
+                          const { ssp, rays } = acousticData;
+                          
+                          const sspX = (speed: number) => {
+                            return 40 + ((speed - 1440) * 140) / 100;
+                          };
+                          const sspY = (depth: number) => {
+                            return 20 + (depth * 180) / acousticData.maxDepth;
+                          };
+                          
+                          const rayX = (rx: number) => {
+                            return 230 + Math.min(500, (rx * 500) / 6000);
+                          };
+                          const rayY = (rz: number) => {
+                            return 20 + (rz * 180) / acousticData.maxDepth;
+                          };
+                          
+                          const sspPath = ssp.map(p => `${sspX(p.speed)},${sspY(p.depth)}`).join(" L ");
+                          
+                          return (
+                            <svg viewBox="0 0 760 230" className="w-full h-auto select-none font-mono">
+                              {/* Background Grids */}
+                              <rect x="30" y="20" width="160" height="180" fill="#000000" fillOpacity="0.4" stroke="#450a0a" strokeOpacity="0.3" />
+                              <rect x="230" y="20" width="510" height="180" fill="#000000" fillOpacity="0.4" stroke="#450a0a" strokeOpacity="0.3" />
+                              
+                              {/* Depth grid tick coordinates */}
+                              {(() => {
+                                const ticks = acousticData.maxDepth <= 100 
+                                  ? [0, Math.round(acousticData.maxDepth * 0.25), Math.round(acousticData.maxDepth * 0.5), Math.round(acousticData.maxDepth * 0.75), acousticData.maxDepth]
+                                  : [0, 500, 1000, 1500, 2000];
+                                return ticks.map(d => {
+                                  const y = sspY(d);
+                                  return (
+                                    <g key={d} opacity="0.6">
+                                      <line x1="25" y1={y} x2="30" y2={y} stroke="#f87171" strokeWidth="0.5" />
+                                      <line x1="225" y1={y} x2="230" y2={y} stroke="#f87171" strokeWidth="0.5" />
+                                      <text x="5" y={y + 3} fill="#94a3b8" fontSize="8" textAnchor="start">{d}m</text>
+                                    </g>
+                                  );
+                                });
+                              })()}
+                              
+                              {/* Dynamic SOFAR Duct Channel Rendering (only in deep water) */}
+                              {acousticData.maxDepth > 500 && (
+                                <>
+                                  <rect x="230" y={sspY(acousticData.sofarDepth - 200)} width="510" height={sspY(acousticData.sofarDepth + 200) - sspY(acousticData.sofarDepth - 200)} fill="#22c55e" fillOpacity="0.08" />
+                                  <line x1="230" y1={sspY(acousticData.sofarDepth)} x2="740" y2={sspY(acousticData.sofarDepth)} stroke="#22c55e" strokeDasharray="3,3" strokeOpacity="0.5" strokeWidth="1" />
+                                  <text x="240" y={sspY(acousticData.sofarDepth) - 4} fill="#22c55e" fontSize="7" opacity="0.6" fontWeight="bold">SOFAR DUCT AXIS (~{acousticData.sofarDepth}m)</text>
+                                </>
+                              )}
+                              
+                              {/* Sound refraction shadow blind zone (surface layer) */}
+                              {acousticData.maxDepth > 500 && (
+                                <>
+                                  <path d={`M 230,20 L 740,20 L 740,${sspY(120)} Z`} fill="#ef4444" fillOpacity="0.1" />
+                                  <text x="630" y="32" fill="#ef4444" fontSize="7" opacity="0.7" fontWeight="bold">SHADOW ZONE (BLIND)</text>
+                                </>
+                              )}
+                              
+                              {/* Topographical Shadow Zone Behind Seamount */}
+                              {acousticData.maxDepth > 500 && (
+                                <>
+                                  <path 
+                                    d={`M ${rayX(3200)},${rayY(900)} L ${rayX(6000)},${rayY(1500)} L ${rayX(6000)},${rayY(2000)} L ${rayX(3200)},${rayY(2000)} Z`} 
+                                    fill="#ef4444" 
+                                    fillOpacity="0.1" 
+                                    stroke="#ef4444"
+                                    strokeDasharray="2,3"
+                                    strokeOpacity="0.4"
+                                    strokeWidth="0.5"
+                                  />
+                                  <text x="500" y={rayY(1650)} fill="#ef4444" fontSize="7" opacity="0.6" fontWeight="bold">TOPOGRAPHICAL SHADOW ZONE (BLIND)</text>
+                                </>
+                              )}
+                              
+                              {/* Sound Speed Profile curve line */}
+                              <path d={`M ${sspPath}`} fill="none" stroke="#3b82f6" strokeWidth="2" />
+                              
+                              {/* Sound velocity axis grids */}
+                              {(() => {
+                                const velTicks = acousticData.maxDepth <= 100 ? [1460, 1480, 1500, 1520] : [1440, 1480, 1520];
+                                return velTicks.map(v => {
+                                  const x = sspX(v);
+                                  return (
+                                    <g key={v} opacity="0.6">
+                                      <line x1={x} y1="200" x2={x} y2="205" stroke="#f87171" strokeWidth="0.5" />
+                                      <text x={x} y="213" fill="#94a3b8" fontSize="7" textAnchor="middle">{v} m/s</text>
+                                    </g>
+                                  );
+                                });
+                              })()}
+                              <text x="110" y="12" fill="#3b82f6" fontSize="8" textAnchor="middle" fontWeight="bold">SOUND SPEED PROFILE</text>
+                              
+                              {/* Refracted Acoustic Rays */}
+                              {rays.map((ray, rIdx) => {
+                                const rayPathStr = ray.path.map(pt => `${rayX(pt[0])},${rayY(pt[1])}`).join(" L ");
+                                return (
+                                  <path 
+                                    key={rIdx} 
+                                    d={`M ${rayPathStr}`} 
+                                    fill="none" 
+                                    stroke={ray.collides ? "#ef4444" : Math.abs(ray.angle) <= 30 ? "#22c55e" : "#06b6d4"} 
+                                    strokeWidth="0.8" 
+                                    strokeOpacity={ray.collides ? "0.4" : Math.abs(ray.angle) <= 30 ? "0.85" : "0.6"} 
+                                  />
+                                );
+                              })}
+                              
+                              {/* Dynamic Topographical Seafloor Shaded Profile */}
+                              <polygon 
+                                points={`${rayX(0)},200 ` + 
+                                  Array.from({ length: 61 }, (_, i) => {
+                                    const rx = (i * 6000) / 60;
+                                    const rz = acousticData.getSeafloorDepth(rx);
+                                    return `${rayX(rx)},${rayY(rz)}`;
+                                  }).join(" ") + ` ${rayX(6000)},200`}
+                                fill="#110505" 
+                                fillOpacity="0.95" 
+                                stroke="#7f1d1d" 
+                                strokeWidth="1.5" 
+                              />
+                              
+                              {/* Seafloor labels */}
+                              <text x="660" y={rayY(acousticData.getSeafloorDepth(6000)) - 6} fill="#94a3b8" fontSize="7" opacity="0.7">
+                                {simulationData?.case_study_id === "atlas" ? "TRINITY SANDBED (~12m)" : simulationData?.case_study_id === "sriwijaya" ? "JAVA SILTBED (~52m)" : "OCEAN CRUST / SEAMOUNT"}
+                              </text>
+                              
+                              {/* Black Box Pinpoint */}
+                              <circle cx={rayX(0)} cy={rayY(acousticData.getSeafloorDepth(0))} r="5" fill="#f97316" className="animate-pulse" />
+                              <circle cx={rayX(0)} cy={rayY(acousticData.getSeafloorDepth(0))} r="1.5" fill="#ffffff" />
+                              <text x={rayX(0) + 8} y={rayY(acousticData.getSeafloorDepth(0)) - 3} fill="#f97316" fontSize="8" fontWeight="bold">BLACK BOX (37.5 kHz)</text>
+                              
+                              {/* Interactive TPL sensor overlay */}
+                              {(() => {
+                                const hy = rayY(hydrophoneDepth);
+                                return (
+                                  <g opacity="0.9">
+                                    <line x1="230" y1={hy} x2="740" y2={hy} stroke="#06b6d4" strokeDasharray="2, 4" strokeWidth="1" />
+                                    <circle cx="485" cy={hy} r="4.5" fill="#06b6d4" className="animate-ping" />
+                                    <circle cx="485" cy={hy} r="2" fill="#ffffff" />
+                                    <text x="495" y={hy + 2} fill="#06b6d4" fontSize="7" fontWeight="bold">TPL TOW SENSOR ({hydrophoneDepth}m)</text>
+                                  </g>
+                                );
+                              })()}
+                              
+                              <text x="485" y="12" fill="#06b6d4" fontSize="8" textAnchor="middle" fontWeight="bold">ACOUSTIC RAY REFRACTION PATHS (SNELL'S LAW)</text>
+                            </svg>
+                          );
+                        })()}
                       </div>
                     </div>
 
-                    <div className="bg-[#020617]/90 border border-cyan-950/60 p-3 rounded font-sans text-[10px] leading-relaxed text-slate-300">
-                      <span className="block font-mono text-[9px] text-cyan-400 font-bold uppercase tracking-wider mb-1.5">
-                        TACTICAL SONAR OPERATION PROTOCOL
-                      </span>
-                      <div className="space-y-1.5 text-slate-300 leading-normal font-sans font-light">
-                        <p>
-                          <strong className="text-red-400 uppercase font-semibold">1. Mixed Layer Alert:</strong> Strong negative temperature gradient in the upper 100m bends sound waves sharply downward. Surface-towed sonars will be 100% blind to deep seafloor pings.
-                        </p>
-                        <p>
-                          <strong className="text-green-400 uppercase font-semibold">2. SOFAR Duct Trapping:</strong> Acoustic wave-fronts are trapped in the sound velocity minimum channel. Lower the Towed Pinger Locator (TPL) to <span className="text-green-400 font-bold font-mono">750m - 900m depth</span> for long-range duct interception.
-                        </p>
-                        <p>
-                          <strong className="text-cyan-400 uppercase font-semibold">3. Seafloor Direct Path:</strong> Deploy autonomous underwater vehicles (AUVs) with high-frequency sidescan sonar in lawnmower patterns below 1500m for visual confirmation.
-                        </p>
+                    {/* RIGHT COLUMN: Interactive deployment sliders & advisories */}
+                    <div className="md:col-span-4 bg-slate-950/40 p-4 rounded-lg border border-red-950/40 flex flex-col justify-between gap-4 text-left select-text">
+                      <div className="space-y-3">
+                        <span className="block text-[10px] text-cyan-400 font-bold uppercase tracking-wider border-b border-cyan-950/40 pb-1.5">
+                          🔊 ACOUSTIC HYDRODYNAMIC SUMMARY
+                        </span>
+                        
+                        <div className="space-y-2 text-[10px] text-slate-300 font-mono">
+                          <div className="flex justify-between border-b border-cyan-950/20 pb-1">
+                            <span>BEACON FREQUENCY:</span>
+                            <span className="text-cyan-400 font-bold">37.5 kHz (Pulsed)</span>
+                          </div>
+                          <div className="flex justify-between border-b border-cyan-950/20 pb-1">
+                            <span>WATER COLUMN SALINITY:</span>
+                            <span className="text-white font-bold">{acousticData.salinity} PSU</span>
+                          </div>
+                          <div className="flex justify-between border-b border-cyan-950/20 pb-1">
+                            <span>TERRAIN OBSTRUCTION INDEX:</span>
+                            <span className={`font-bold ${acousticData.obstructionIndex > 30 ? "text-red-400 animate-pulse" : "text-yellow-400"}`}>
+                              {acousticData.obstructionIndex}% BLOCKED
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>MAX BATHY DEPTH:</span>
+                            <span className="text-white font-bold">{acousticData.maxDepth}m</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Transducer Sliders */}
+                      <div className="bg-[#050101]/90 border border-cyan-950/60 p-3 rounded-lg space-y-3 font-mono text-[10px] text-slate-300">
+                        <span className="block font-bold text-cyan-400 uppercase tracking-wider text-[9px]">🎛️ TRANSDUCER DEPLOYMENT</span>
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[8px] text-slate-400 font-bold">
+                            <span>TOW SENSOR DEPTH:</span>
+                            <span className="text-white font-bold">{hydrophoneDepth}m</span>
+                          </div>
+                          <input 
+                            type="range" 
+                            min="0" 
+                            max={acousticData.maxDepth} 
+                            step={acousticData.maxDepth > 100 ? "10" : "1"}
+                            value={hydrophoneDepth} 
+                            onChange={(e) => setHydrophoneDepth(Number(e.target.value))}
+                            className="w-full h-1 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-500 border border-cyan-950"
+                          />
+                          <div className="flex justify-between text-[7px] text-slate-500">
+                            <span>0m (SURFACE)</span>
+                            <span>{acousticData.maxDepth}m (FLOOR)</span>
+                          </div>
+                        </div>
+                        
+                        {/* Live Hydrophone Refraction Alerts Indicator */}
+                        {(() => {
+                          let statusColor = "text-red-400 border-red-950 bg-red-950/10";
+                          let statusLabel = "SURFACE BLIND ZONE";
+                          let statusDesc = "Warm surface layer bends sound waves sharply downward. Towed locator is 100% blind to bottom pings here.";
+                          
+                          if (acousticData.maxDepth <= 100) {
+                            statusColor = "text-green-400 border-green-950 bg-green-950/10";
+                            statusLabel = "SHALLOW DIRECT RANGE MATCH";
+                            statusDesc = "Shallow coastal corridor. Direct acoustic line-of-sight confirmed. Minimal refraction distortion.";
+                          } else {
+                            if (hydrophoneDepth >= 700 && hydrophoneDepth <= 950) {
+                              statusColor = "text-green-400 border-green-950 bg-green-950/10 animate-pulse";
+                              statusLabel = "SOFAR CHANNEL TRAPPING - OPTIMAL";
+                              statusDesc = "Sensor centered on the sound speed minimum channel. Pings are trapped inside this wave duct, extending capture > 15 km.";
+                            } else if (hydrophoneDepth > 1400) {
+                              statusColor = "text-cyan-400 border-cyan-950 bg-cyan-950/10";
+                              statusLabel = "DEEP DIRECT PATH SCAN";
+                              statusDesc = "Sensor lowered below the deep thermocline boundary. High direct path interception, avoiding seamount obstruction.";
+                            } else if (hydrophoneDepth > 100) {
+                              statusColor = "text-yellow-400 border-yellow-950 bg-yellow-950/10";
+                              statusLabel = "TRANSITIONAL LAYER SEARCH";
+                              statusDesc = "Deep refraction thermocline. Sound waves exhibit moderate downward bending. Reduced horizontal sweep bounds.";
+                            }
+                          }
+                          
+                          return (
+                            <div className={`p-2 border rounded ${statusColor} space-y-0.5 text-[8.5px] leading-relaxed`}>
+                              <span className="block font-bold uppercase tracking-wider">{statusLabel}</span>
+                              <p className="font-sans font-light">{statusDesc}</p>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>
-                </div>
+                )}
               </>
             )}
 
