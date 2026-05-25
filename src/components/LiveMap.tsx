@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { MapContainer, TileLayer, Marker, useMap, Polyline, Circle, Popup } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, useMap, Polyline, Circle, Popup, Tooltip } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Search, Compass, Info, X, Navigation, Radio, Activity, ShieldAlert, Cpu, CornerRightDown } from "lucide-react";
+import { getAirlineName } from "../lib/airlineNames";
 
 // Types for our flight data
 interface Flight {
@@ -444,7 +445,8 @@ export default function LiveMap() {
       (f) =>
         f.callsign.toLowerCase().includes(query) ||
         f.icao24.toLowerCase().includes(query) ||
-        f.origin_country.toLowerCase().includes(query)
+        f.origin_country.toLowerCase().includes(query) ||
+        getAirlineName(f.callsign).toLowerCase().includes(query)
     );
     setFilteredFlights(filtered);
   }, [searchQuery, flights]);
@@ -778,7 +780,7 @@ export default function LiveMap() {
                 </div>
                 
                 <div className="flex justify-between text-slate-300 text-[11px] border-b border-red-950/10 pb-1">
-                  <span>FLIGHT: <span className="text-white font-bold">{alert.callsign}</span></span>
+                  <span>FLIGHT: <span className="text-white font-bold">{alert.callsign} ({getAirlineName(alert.callsign)})</span></span>
                   <span>HEX: <span className="text-white font-bold">{alert.icao24}</span></span>
                 </div>
 
@@ -834,7 +836,18 @@ export default function LiveMap() {
                     setViewTarget({ center: [flight.latitude, flight.longitude], zoom: 5 });
                   },
                 }}
-              />
+              >
+                <Tooltip direction="top" offset={[0, -10]} opacity={0.9}>
+                  <div className="text-slate-900 font-sans p-0.5">
+                    <div className="font-bold flex items-center gap-1.5">
+                      <span>{flight.callsign}</span>
+                      <span className="text-[9px] text-slate-500 font-mono font-normal">({flight.icao24.toUpperCase()})</span>
+                    </div>
+                    <div className="text-[11px] text-slate-700 font-semibold">{getAirlineName(flight.callsign)}</div>
+                    <div className="text-[9px] text-slate-500 font-mono mt-0.5">ALT: {flight.altitude.toLocaleString()}m | {flight.velocity} km/h</div>
+                  </div>
+                </Tooltip>
+              </Marker>
             );
           })}
 
@@ -1122,15 +1135,18 @@ export default function LiveMap() {
         {selectedFlight && (
           <div className="absolute top-6 right-6 z-[1000] w-80 max-h-[calc(100vh-140px)] overflow-y-auto rounded-xl border border-red-950/70 bg-[#0d0202]/90 backdrop-blur-md shadow-2xl p-5 space-y-4 font-sans">
             <div className="flex items-center justify-between border-b border-red-950/50 pb-3">
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 <span className="text-[10px] font-mono text-red-400 tracking-wider uppercase font-bold">TELEMETRY_LINK</span>
                 <h3 className="text-xl font-bold text-slate-100 flex items-center gap-2">
                   <Navigation
-                    className="w-5 h-5 text-red-400"
+                    className="w-5 h-5 text-red-400 shrink-0"
                     style={{ transform: `rotate(${selectedFlight.heading}deg)` }}
                   />
-                  {selectedFlight.callsign}
+                  <span>{selectedFlight.callsign}</span>
                 </h3>
+                <span className="block text-xs font-semibold text-slate-400 pl-7 uppercase tracking-wider">
+                  {getAirlineName(selectedFlight.callsign)}
+                </span>
               </div>
               <button
                 onClick={() => {
@@ -1381,7 +1397,9 @@ export default function LiveMap() {
             <div className="flex items-center justify-between border-b border-red-950/60 pb-2.5">
               <div className="flex items-center gap-2">
                 <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
-                <span className="text-xs md:text-sm font-bold text-white tracking-wider font-mono">CRASH TRAJECTORY HUD & DRIFT METRICS</span>
+                <span className="text-xs md:text-sm font-bold text-white tracking-wider font-mono">
+                  CRASH TRAJECTORY HUD & DRIFT METRICS {selectedFlight ? `- ${selectedFlight.callsign} (${getAirlineName(selectedFlight.callsign)})` : ""}
+                </span>
               </div>
               <button 
                 onClick={() => setSimulationData(null)}

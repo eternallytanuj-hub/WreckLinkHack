@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { getAirlineName } from "../../lib/airlineNames";
 
 interface Flight {
   icao24: string;
@@ -246,7 +247,7 @@ export default function PublicAlarmsPage() {
                 <option value="">-- SELECT LIVE TARGET TO CLONE TELEMETRY --</option>
                 {flights.map((f) => (
                   <option key={f.icao24} value={f.icao24}>
-                    {f.callsign} ({f.origin_country}) - ALT: {f.altitude}m
+                    {f.callsign} ({getAirlineName(f.callsign)}) - {f.origin_country} - ALT: {f.altitude}m
                   </option>
                 ))}
               </select>
@@ -599,7 +600,7 @@ export default function PublicAlarmsPage() {
                         <div className="space-y-1.5 text-slate-300">
                           <div className="flex justify-between">
                             <span className="text-slate-500">CALLSIGN:</span>
-                            <span className="text-white font-bold">{verificationResult.telemetry_used.callsign}</span>
+                            <span className="text-white font-bold">{verificationResult.telemetry_used.callsign} ({getAirlineName(verificationResult.telemetry_used.callsign)})</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-500">ALTITUDE:</span>
