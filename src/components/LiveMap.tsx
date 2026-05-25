@@ -161,6 +161,15 @@ export default function LiveMap() {
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [selectedFlightPath, setSelectedFlightPath] = useState<[number, number][]>([]);
 
+  // Satellite layers state
+  const [satelliteLayerType, setSatelliteLayerType] = useState<"off" | "daily" | "highres">("off");
+  const [satelliteDateStr, setSatelliteDateStr] = useState<string>("");
+  useEffect(() => {
+    const date = new Date();
+    date.setDate(date.getDate() - 2); // 2 days ago to ensure complete NASA global composites
+    setSatelliteDateStr(date.toISOString().split('T')[0]);
+  }, []);
+
   // Dynamic Acoustic Ray-Tracing calculations
   const surfaceTemp = selectedFlightWeather?.temp ?? 15.0;
   const acousticData = React.useMemo(() => {
@@ -791,7 +800,7 @@ export default function LiveMap() {
         {/* Layer Controls Panel */}
         <div className="p-3.5 rounded-xl border border-red-950/60 bg-[#0f0202]/20 space-y-2.5">
           <span className="text-[10px] font-mono tracking-wider text-slate-400 font-bold uppercase block">RADAR OVERLAY LAYERS</span>
-          <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center justify-between text-xs pb-1.5 border-b border-red-950/20">
             <span className="text-slate-300 font-semibold tracking-wide">Weather Hazard Radar</span>
             <button
               onClick={() => setShowWeatherLayer(!showWeatherLayer)}
@@ -803,6 +812,42 @@ export default function LiveMap() {
             >
               {showWeatherLayer ? "ACTIVE" : "STANDBY"}
             </button>
+          </div>
+          
+          <div className="flex flex-col gap-1.5 text-xs pt-1.5">
+            <span className="text-slate-300 font-semibold tracking-wide block">Satellite Imagery Layer</span>
+            <div className="grid grid-cols-3 gap-1">
+              <button
+                onClick={() => setSatelliteLayerType("off")}
+                className={`py-1 rounded font-mono text-[8px] font-bold border transition-all ${
+                  satelliteLayerType === "off"
+                    ? "bg-red-950/40 border-red-800/60 text-red-400"
+                    : "bg-slate-950/40 border-red-950/20 text-slate-500 hover:text-slate-400"
+                }`}
+              >
+                OFF
+              </button>
+              <button
+                onClick={() => setSatelliteLayerType("daily")}
+                className={`py-1 rounded font-mono text-[8px] font-bold border transition-all ${
+                  satelliteLayerType === "daily"
+                    ? "bg-cyan-950/40 border-cyan-800/60 text-cyan-400"
+                    : "bg-slate-950/40 border-red-950/20 text-slate-500 hover:text-slate-400"
+                }`}
+              >
+                DAILY (NASA)
+              </button>
+              <button
+                onClick={() => setSatelliteLayerType("highres")}
+                className={`py-1 rounded font-mono text-[8px] font-bold border transition-all ${
+                  satelliteLayerType === "highres"
+                    ? "bg-teal-950/40 border-teal-800/60 text-teal-400"
+                    : "bg-slate-950/40 border-red-950/20 text-slate-500 hover:text-slate-400"
+                }`}
+              >
+                HIGH-RES (ESRI)
+              </button>
+            </div>
           </div>
         </div>
 
@@ -891,6 +936,23 @@ export default function LiveMap() {
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
           />
+
+          {satelliteLayerType === "daily" && satelliteDateStr && (
+            <TileLayer
+              attribution='&copy; NASA GIBS / EOSDIS'
+              url={`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/${satelliteDateStr}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`}
+              opacity={0.85}
+              maxZoom={9}
+            />
+          )}
+
+          {satelliteLayerType === "highres" && (
+            <TileLayer
+              attribution='&copy; Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+              url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+              opacity={0.85}
+            />
+          )}
 
           {/* Renders all filtered tracked flights */}
           {filteredFlights.map((flight) => {
