@@ -35,6 +35,12 @@ export default function Home() {
             >
               LIVE_MAP
             </Link>
+            <Link
+              href="/public-alarms"
+              className="text-xs font-mono tracking-widest text-slate-500 hover:text-blue-400 transition-colors duration-300"
+            >
+              PUBLIC_ALARMS
+            </Link>
           </nav>
 
           <div className="flex items-center gap-4">

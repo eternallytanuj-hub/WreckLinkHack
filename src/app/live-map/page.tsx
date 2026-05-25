@@ -28,9 +28,12 @@ export default function LiveMapPage() {
             <Link href="/" className="text-slate-500 hover:text-blue-400 tracking-widest transition-colors duration-300">
               DASHBOARD
             </Link>
-            <span className="text-blue-400 tracking-widest border-b border-blue-500/30 pb-1">
+            <Link href="/live-map" className="text-slate-500 hover:text-blue-400 tracking-widest transition-colors duration-300">
               LIVE_MAP
-            </span>
+            </Link>
+            <Link href="/public-alarms" className="text-slate-500 hover:text-blue-400 tracking-widest transition-colors duration-300">
+              PUBLIC_ALARMS
+            </Link>
           </nav>
 
           <div className="flex items-center gap-4">
