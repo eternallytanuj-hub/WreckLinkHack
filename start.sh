@@ -14,16 +14,20 @@ echo "🌟 Starting Wreck Link Services..."
 echo "   - Backend: http://localhost:8000"
 echo "   - Frontend: http://localhost:3000 (or default Next.js port)"
 
-# Start backend
+# Start backend API
 python3 backend/main.py &
 BACKEND_PID=$!
+
+# Start background worker daemon
+python3 backend/worker.py &
+WORKER_PID=$!
 
 # Start frontend
 npm run dev &
 FRONTEND_PID=$!
 
 # Handle shutdown gracefully
-trap "kill $BACKEND_PID $FRONTEND_PID; exit" SIGINT SIGTERM
+trap "kill $BACKEND_PID $WORKER_PID $FRONTEND_PID; exit" SIGINT SIGTERM
 
 # Wait
 wait

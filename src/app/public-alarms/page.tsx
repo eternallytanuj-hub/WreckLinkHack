@@ -203,6 +203,9 @@ export default function PublicAlarmsPage() {
             <span className="text-blue-400 tracking-widest border-b border-blue-500/30 pb-1">
               PUBLIC_ALARMS
             </span>
+            <Link href="/web-alerts" className="text-slate-500 hover:text-blue-400 tracking-widest transition-colors duration-300">
+              WEB_ALERTS
+            </Link>
           </nav>
 
           <div className="flex items-center gap-4">

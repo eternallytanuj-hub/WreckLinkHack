@@ -41,6 +41,12 @@ export default function Home() {
             >
               PUBLIC_ALARMS
             </Link>
+            <Link
+              href="/web-alerts"
+              className="text-xs font-mono tracking-widest text-slate-500 hover:text-blue-400 transition-colors duration-300"
+            >
+              WEB_ALERTS
+            </Link>
           </nav>
 
           <div className="flex items-center gap-4">
