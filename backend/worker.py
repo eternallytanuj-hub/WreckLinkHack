@@ -50,27 +50,27 @@ async def download_image(url: str) -> bytes:
 
 
 async def upload_to_supabase_storage(file_bytes: bytes, filename: str) -> str:
-    """Upload image to Supabase Storage bucket 'wreck-alerts-images'"""
+    """Upload image to Supabase Storage bucket 'wreck-alarms'"""
     if not supabase:
         print("  [MOCK] Supabase storage upload skipped. Returning mock URL.")
-        return f"https://mock-storage.local/wreck-alerts-images/{filename}"
+        return f"https://mock-storage.local/wreck-alarms/{filename}"
     
     try:
         try:
-            supabase.storage.create_bucket("wreck-alerts-images", options={"public": True})
+            supabase.storage.create_bucket("wreck-alarms", options={"public": True})
         except Exception:
             pass
             
-        supabase.storage.from_("wreck-alerts-images").upload(
+        supabase.storage.from_("wreck-alarms").upload(
             path=filename,
             file=file_bytes,
             file_options={"content-type": "image/jpeg"}
         )
-        public_url = supabase.storage.from_("wreck-alerts-images").get_public_url(filename)
+        public_url = supabase.storage.from_("wreck-alarms").get_public_url(filename)
         return public_url
     except Exception as e:
         print(f"  [ERROR] Supabase storage upload failed: {e}. Falling back to mock URL.")
-        return f"https://mock-storage.local/wreck-alerts-images/{filename}"
+        return f"https://mock-storage.local/wreck-alarms/{filename}"
 
 
 async def insert_wreck_alert(alert_data: dict):
