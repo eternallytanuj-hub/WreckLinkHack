@@ -145,7 +145,7 @@ export default function LiveMap() {
   // Crash Simulation state
   const [simulating, setSimulating] = useState(false);
   const [simulationData, setSimulationData] = useState<any | null>(null);
-  const [activeSimulationTab, setActiveSimulationTab] = useState<"descent" | "sar">("descent");
+  const [activeSimulationTab, setActiveSimulationTab] = useState<"descent" | "sar" | "sonar">("descent");
 
   // Maritime Vessel state
   const [nearestVessel, setNearestVessel] = useState<any | null>(null);
@@ -160,6 +160,83 @@ export default function LiveMap() {
   const [selectedFlightWeather, setSelectedFlightWeather] = useState<any | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [selectedFlightPath, setSelectedFlightPath] = useState<[number, number][]>([]);
+
+  // Dynamic Acoustic Ray-Tracing calculations
+  const surfaceTemp = selectedFlightWeather?.temp ?? 15.0;
+  const acousticData = React.useMemo(() => {
+    const maxDepth = 2000;
+    const stepSize = 25; // 25m intervals
+    const salinity = 35.0;
+    
+    // Generate SSP
+    const ssp: { depth: number; speed: number; temp: number }[] = [];
+    for (let d = 0; d <= maxDepth; d += stepSize) {
+      let temp = 4.0;
+      if (d < 100) {
+        temp = surfaceTemp;
+      } else if (d < 800) {
+        temp = 4.0 + (surfaceTemp - 4.0) * Math.exp(-(d - 100) / 250);
+      } else {
+        temp = 2.0 + 2.0 * Math.exp(-(d - 800) / 1000);
+      }
+      
+      const c = 1448.96 + 
+                4.591 * temp - 
+                0.05304 * temp * temp + 
+                2.374e-4 * Math.pow(temp, 3) + 
+                1.340 * (salinity - 35) + 
+                0.0163 * d + 
+                1.675e-7 * d * d;
+      ssp.push({ depth: d, speed: c, temp });
+    }
+    
+    // Ray trace
+    const rays: { angle: number; path: [number, number][] }[] = [];
+    const launchAngles = [-85, -75, -60, -45, -30, -15, 0, 15, 30, 45, 60, 75, 85];
+    const c_seafloor = ssp[ssp.length - 1].speed;
+    
+    for (const launchAngleDeg of launchAngles) {
+      const path: [number, number][] = [];
+      let x = 0;
+      let z = maxDepth;
+      
+      const theta_0 = (90 - launchAngleDeg) * Math.PI / 180;
+      const initial_cos = Math.cos(theta_0);
+      
+      path.push([x, z]);
+      
+      for (let idx = ssp.length - 2; idx >= 0; idx--) {
+        const target_depth = ssp[idx].depth;
+        const c_current = ssp[idx].speed;
+        
+        const cos_theta = c_current * (initial_cos / c_seafloor);
+        if (Math.abs(cos_theta) > 1.0) {
+          // Total reflection
+          break;
+        }
+        
+        const current_angle = Math.acos(cos_theta);
+        const dz = stepSize;
+        const dx = dz / Math.tan(current_angle);
+        
+        x += Math.abs(dx) * Math.sign(initial_cos);
+        z = target_depth;
+        
+        path.push([x, z]);
+      }
+      rays.push({ angle: launchAngleDeg, path });
+    }
+    
+    let minSpeedIdx = 0;
+    for (let i = 0; i < ssp.length; i++) {
+      if (ssp[i].speed < ssp[minSpeedIdx].speed) {
+        minSpeedIdx = i;
+      }
+    }
+    const sofarDepth = ssp[minSpeedIdx].depth;
+    
+    return { ssp, rays, sofarDepth };
+  }, [surfaceTemp]);
 
   // Live Warnings Feed state
   const [signalLossFeed, setSignalLossFeed] = useState<any[]>([
@@ -1426,11 +1503,21 @@ export default function LiveMap() {
                   onClick={() => setActiveSimulationTab("sar")}
                   className={`px-3 py-1 font-mono text-xs font-bold rounded cursor-pointer transition-colors duration-300 ${
                     activeSimulationTab === "sar"
-                      ? "bg-yellow-950/40 border border-yellow-800/60 text-yellow-500 animate-pulse"
+                      ? "bg-yellow-950/40 border border-yellow-800/60 text-yellow-500"
                       : "text-slate-500 hover:text-slate-300"
                   }`}
                 >
                   🌊 SAR DRIFT SIMULATOR
+                </button>
+                <button
+                  onClick={() => setActiveSimulationTab("sonar")}
+                  className={`px-3 py-1 font-mono text-xs font-bold rounded cursor-pointer transition-colors duration-300 ${
+                    activeSimulationTab === "sonar"
+                      ? "bg-cyan-950/40 border border-cyan-800/60 text-cyan-400 animate-pulse"
+                      : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  🔊 SONAR ACOUSTICS (37.5 kHz)
                 </button>
               </div>
             )}
@@ -1517,7 +1604,7 @@ export default function LiveMap() {
                   </p>
                 </div>
               </>
-            ) : (
+            ) : activeSimulationTab === "sar" ? (
               <>
                 {/* Tab 2: SAR Ocean surface drift simulation details */}
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-5 font-mono text-xs items-stretch text-left">
@@ -1577,6 +1664,140 @@ export default function LiveMap() {
                     )}
                   </div>
 
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Tab 3: Sonar Ray-Tracing & Acoustics */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-5 font-mono text-xs items-stretch text-left">
+                  {/* LEFT COLUMN: SVG Graph (Left: SSP, Right: Ray Trace) */}
+                  <div className="md:col-span-8 bg-[#090101]/50 p-4 rounded-lg border border-red-950/40 flex flex-col justify-between">
+                    <span className="block text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-2">
+                      🔊 2D UNDERSEA ACOUSTIC RAY-TRACING & REFRACTION WAVEFRONT MODEL
+                    </span>
+                    <div className="w-full bg-[#050101]/60 rounded border border-red-950/20 p-2 overflow-hidden flex items-center justify-center">
+                      {(() => {
+                        const { ssp, rays } = acousticData;
+                        
+                        const sspX = (speed: number) => {
+                          return 40 + ((speed - 1460) * 140) / 80;
+                        };
+                        const sspY = (depth: number) => {
+                          return 20 + (depth * 180) / 2000;
+                        };
+                        
+                        const rayX = (rx: number) => {
+                          return 240 + Math.min(500, (rx * 500) / 6000);
+                        };
+                        const rayY = (rz: number) => {
+                          return 20 + (rz * 180) / 2000;
+                        };
+                        
+                        const sspPath = ssp.map(p => `${sspX(p.speed)},${sspY(p.depth)}`).join(" L ");
+                        
+                        return (
+                          <svg viewBox="0 0 760 230" className="w-full h-auto select-none font-mono">
+                            <rect x="30" y="20" width="160" height="180" fill="#000000" fillOpacity="0.4" stroke="#450a0a" strokeOpacity="0.3" />
+                            <rect x="230" y="20" width="510" height="180" fill="#000000" fillOpacity="0.4" stroke="#450a0a" strokeOpacity="0.3" />
+                            
+                            {[0, 500, 1000, 1500, 2000].map(d => {
+                              const y = sspY(d);
+                              return (
+                                <g key={d} opacity="0.6">
+                                  <line x1="25" y1={y} x2="30" y2={y} stroke="#f87171" strokeWidth="0.5" />
+                                  <line x1="225" y1={y} x2="230" y2={y} stroke="#f87171" strokeWidth="0.5" />
+                                  <text x="5" y={y + 3} fill="#94a3b8" fontSize="8" textAnchor="start">{d}m</text>
+                                </g>
+                              );
+                            })}
+                            
+                            <rect x="230" y={sspY(600)} width="510" height={sspY(1000) - sspY(600)} fill="#22c55e" fillOpacity="0.08" />
+                            <line x1="230" y1={sspY(800)} x2="740" y2={sspY(800)} stroke="#22c55e" strokeDasharray="3,3" strokeOpacity="0.5" strokeWidth="1" />
+                            <text x="240" y={sspY(800) - 4} fill="#22c55e" fontSize="7" opacity="0.6" fontWeight="bold">SOFAR DUCT AXIS (~800m)</text>
+                            
+                            <path d={`M 230,20 L 740,20 L 740,${sspY(120)} Z`} fill="#ef4444" fillOpacity="0.1" />
+                            <text x="630" y="32" fill="#ef4444" fontSize="7" opacity="0.7" fontWeight="bold">SHADOW ZONE (BLIND)</text>
+                            
+                            <path d={`M ${sspPath}`} fill="none" stroke="#3b82f6" strokeWidth="2" />
+                            {[1460, 1500, 1540].map(v => {
+                              const x = sspX(v);
+                              return (
+                                <g key={v} opacity="0.6">
+                                  <line x1={x} y1="200" x2={x} y2="205" stroke="#f87171" strokeWidth="0.5" />
+                                  <text x={x} y="213" fill="#94a3b8" fontSize="7" textAnchor="middle">{v} m/s</text>
+                                </g>
+                              );
+                            })}
+                            <text x="110" y="12" fill="#3b82f6" fontSize="8" textAnchor="middle" fontWeight="bold">SOUND SPEED PROFILE</text>
+                            
+                            {rays.map((ray, rIdx) => {
+                              const rayPathStr = ray.path.map(pt => `${rayX(pt[0])},${rayY(pt[1])}`).join(" L ");
+                              return (
+                                <path 
+                                  key={rIdx} 
+                                  d={`M ${rayPathStr}`} 
+                                  fill="none" 
+                                  stroke={Math.abs(ray.angle) <= 30 ? "#22c55e" : "#06b6d4"} 
+                                  strokeWidth="0.8" 
+                                  strokeOpacity={Math.abs(ray.angle) <= 30 ? "0.85" : "0.6"} 
+                                />
+                              );
+                            })}
+                            
+                            <circle cx={rayX(0)} cy={rayY(2000)} r="5" fill="#f97316" className="animate-pulse" />
+                            <circle cx={rayX(0)} cy={rayY(2000)} r="1.5" fill="#ffffff" />
+                            <text x={rayX(0) + 8} y={rayY(2000) - 2} fill="#f97316" fontSize="8" fontWeight="bold">BLACK BOX (37.5 kHz)</text>
+                            
+                            <text x="485" y="12" fill="#06b6d4" fontSize="8" textAnchor="middle" fontWeight="bold">ACOUSTIC RAY REFRACTION PATHS (SNELL'S LAW)</text>
+                          </svg>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* RIGHT COLUMN: Sonar Tactical Advisories */}
+                  <div className="md:col-span-4 bg-slate-950/40 p-4 rounded-lg border border-red-950/40 flex flex-col justify-between space-y-3 text-left select-text">
+                    <div>
+                      <span className="block text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-2">
+                        🔊 DEEP-SEA ACOUSTIC ADVISORY REPORT
+                      </span>
+                      <div className="space-y-2 text-[10px] text-slate-300 font-mono">
+                        <div className="flex justify-between border-b border-cyan-950/40 pb-1.5">
+                          <span>BEACON FREQUENCY:</span>
+                          <span className="text-cyan-400 font-bold">37.5 kHz (Pulsed)</span>
+                        </div>
+                        <div className="flex justify-between border-b border-cyan-950/40 pb-1.5">
+                          <span>THERMOCLINE DEPTH:</span>
+                          <span className="text-white font-bold">75m - 600m</span>
+                        </div>
+                        <div className="flex justify-between border-b border-cyan-950/40 pb-1.5">
+                          <span>SOFAR DUCT AXIS:</span>
+                          <span className="text-green-400 font-bold">~800 m depth</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>SURFACE SHADOW RANGE:</span>
+                          <span className="text-red-400 font-bold">Extending &gt; 1.8 km</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#020617]/90 border border-cyan-950/60 p-3 rounded font-sans text-[10px] leading-relaxed text-slate-300">
+                      <span className="block font-mono text-[9px] text-cyan-400 font-bold uppercase tracking-wider mb-1.5">
+                        TACTICAL SONAR OPERATION PROTOCOL
+                      </span>
+                      <div className="space-y-1.5 text-slate-300 leading-normal font-sans font-light">
+                        <p>
+                          <strong className="text-red-400 uppercase font-semibold">1. Mixed Layer Alert:</strong> Strong negative temperature gradient in the upper 100m bends sound waves sharply downward. Surface-towed sonars will be 100% blind to deep seafloor pings.
+                        </p>
+                        <p>
+                          <strong className="text-green-400 uppercase font-semibold">2. SOFAR Duct Trapping:</strong> Acoustic wave-fronts are trapped in the sound velocity minimum channel. Lower the Towed Pinger Locator (TPL) to <span className="text-green-400 font-bold font-mono">750m - 900m depth</span> for long-range duct interception.
+                        </p>
+                        <p>
+                          <strong className="text-cyan-400 uppercase font-semibold">3. Seafloor Direct Path:</strong> Deploy autonomous underwater vehicles (AUVs) with high-frequency sidescan sonar in lawnmower patterns below 1500m for visual confirmation.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </>
             )}
