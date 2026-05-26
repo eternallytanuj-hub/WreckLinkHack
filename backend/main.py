@@ -435,6 +435,14 @@ async def verify_wreck(
                 "canopy_disruption": "DETECTED" if (not is_false_alarm and not over_water) else "NONE",
                 "slick_footprint": "OIL_SLICK_DETECTED" if (not is_false_alarm and over_water) else "NONE"
             },
+            "sentinel1_sar": {
+                "backscatter_anomaly": "HIGH_CONTRAST_ANOMALY" if not is_false_alarm else "NONE",
+                "surface_roughness_db": -12.4 if not is_false_alarm else -25.2,
+                "oil_slick_damping": "DETECTED" if (not is_false_alarm and over_water) else "NONE",
+                "debris_field_signature": "METALLIC_REFLECTOR" if not is_false_alarm else "NONE",
+                "cloud_penetration_status": "100% OPERATIONAL (MICROWAVE ACTIVE)",
+                "weather_conditions_penetrated": "Storm Cloud Deck (Category 4) / 0% Light"
+            },
             "over_water": over_water
         }
         

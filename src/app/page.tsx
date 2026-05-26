@@ -15,6 +15,7 @@ import {
   VolumeX
 } from "lucide-react";
 import Link from "next/link";
+import { NavHeader } from "../components/NavHeader";
 
 interface CardProps {
   id: string;
@@ -64,8 +65,8 @@ const SystemModuleCard = ({ id, title, desc, icon: Icon, link }: CardProps) => {
           width: "100%",
           height: "300px",
           transformStyle: "preserve-3d",
-          backgroundColor: "#0f0404",
-          border: "1px solid rgba(220, 38, 38, 0.15)",
+          backgroundColor: "#020617",
+          border: "1px solid rgba(37, 99, 235, 0.15)",
         }}
         animate={{
           y: isHovered ? -5 : 0,
@@ -103,7 +104,7 @@ const SystemModuleCard = ({ id, title, desc, icon: Icon, link }: CardProps) => {
 
         {/* Dark background */}
         <motion.div
-          className="absolute inset-0 z-0 bg-gradient-to-b from-[#0c0505] to-[#120404]"
+          className="absolute inset-0 z-0 bg-gradient-to-b from-[#000000] to-[#020617]"
           animate={{
             z: -1
           }}
@@ -137,8 +138,8 @@ const SystemModuleCard = ({ id, title, desc, icon: Icon, link }: CardProps) => {
           className="absolute bottom-0 left-0 right-0 h-2/3 z-20 pointer-events-none"
           style={{
             background: `
-              radial-gradient(ellipse at bottom right, rgba(239, 68, 68, 0.35) -10%, rgba(220, 38, 38, 0) 70%),
-              radial-gradient(ellipse at bottom left, rgba(245, 158, 11, 0.35) -10%, rgba(220, 38, 38, 0) 70%)
+              radial-gradient(ellipse at bottom right, rgba(6, 182, 212, 0.25) -10%, rgba(2, 6, 23, 0) 70%),
+              radial-gradient(ellipse at bottom left, rgba(56, 189, 248, 0.25) -10%, rgba(2, 6, 23, 0) 70%)
             `,
             filter: "blur(30px)",
           }}
@@ -158,7 +159,7 @@ const SystemModuleCard = ({ id, title, desc, icon: Icon, link }: CardProps) => {
           className="absolute bottom-0 left-0 right-0 h-2/3 z-21 pointer-events-none"
           style={{
             background: `
-              radial-gradient(circle at bottom center, rgba(185, 28, 28, 0.4) -20%, rgba(220, 38, 38, 0) 60%)
+              radial-gradient(circle at bottom center, rgba(30, 64, 175, 0.3) -20%, rgba(2, 6, 23, 0) 60%)
             `,
             filter: "blur(35px)",
           }}
@@ -177,12 +178,12 @@ const SystemModuleCard = ({ id, title, desc, icon: Icon, link }: CardProps) => {
         <motion.div
           className="absolute bottom-0 left-0 right-0 h-[2px] z-25 pointer-events-none"
           style={{
-            background: "linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0%, rgba(239, 68, 68, 0.6) 50%, rgba(255, 255, 255, 0.05) 100%)",
+            background: "linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0%, rgba(6, 182, 212, 0.6) 50%, rgba(255, 255, 255, 0.05) 100%)",
           }}
           animate={{
             boxShadow: isHovered
-              ? "0 0 20px 4px rgba(239, 68, 68, 0.85), 0 0 30px 6px rgba(245, 158, 11, 0.65), 0 0 40px 8px rgba(127, 29, 29, 0.4)"
-              : "0 0 15px 3px rgba(239, 68, 68, 0.75), 0 0 25px 5px rgba(245, 158, 11, 0.55), 0 0 35px 7px rgba(127, 29, 29, 0.3)",
+              ? "0 0 20px 4px rgba(6, 182, 212, 0.85), 0 0 30px 6px rgba(56, 189, 248, 0.65), 0 0 40px 8px rgba(30, 58, 138, 0.4)"
+              : "0 0 15px 3px rgba(6, 182, 212, 0.75), 0 0 25px 5px rgba(56, 189, 248, 0.55), 0 0 35px 7px rgba(30, 58, 138, 0.3)",
             opacity: isHovered ? 1 : 0.85,
             z: 0.5
           }}
@@ -201,7 +202,7 @@ const SystemModuleCard = ({ id, title, desc, icon: Icon, link }: CardProps) => {
         >
           {/* Header ID */}
           <div className="flex items-center justify-between mb-4">
-            <span className="text-[10px] font-mono tracking-wider text-red-500/80 font-bold bg-red-950/20 px-2 py-0.5 rounded border border-red-950/30">
+            <span className="text-[10px] font-mono tracking-wider text-cyan-400/85 font-bold bg-cyan-955/20 px-2 py-0.5 rounded border border-blue-950/30">
               {id}
             </span>
           </div>
@@ -210,10 +211,10 @@ const SystemModuleCard = ({ id, title, desc, icon: Icon, link }: CardProps) => {
           <motion.div
             className="w-10 h-10 rounded-full flex items-center justify-center mb-4 shrink-0"
             style={{
-              background: "linear-gradient(225deg, #1d0707 0%, #0f0404 100%)",
+              background: "linear-gradient(225deg, #0e172c 0%, #020617 100%)",
               position: "relative",
               overflow: "hidden",
-              border: "1px solid rgba(239, 68, 68, 0.2)"
+              border: "1px solid rgba(6, 182, 212, 0.2)"
             }}
             animate={{
               boxShadow: isHovered
@@ -250,7 +251,7 @@ const SystemModuleCard = ({ id, title, desc, icon: Icon, link }: CardProps) => {
             />
 
             {/* Matching Lucide icon */}
-            <div className="flex items-center justify-center w-full h-full relative z-10 text-red-500">
+            <div className="flex items-center justify-center w-full h-full relative z-10 text-cyan-400">
               <Icon className="w-4.5 h-4.5" />
             </div>
           </motion.div>
@@ -326,6 +327,41 @@ export default function Home() {
   const alarmIntervalRef = useRef<any>(null);
   const rumbleOsc1Ref = useRef<OscillatorNode | null>(null);
   const rumbleOsc2Ref = useRef<OscillatorNode | null>(null);
+
+  const [consoleLogs, setConsoleLogs] = useState<string[]>([
+    "06:38:01 [JRCC] Salinity sensor data parsed for drift vectors.",
+    "06:38:03 [ACOUSTIC] Undersea Ray-Tracing completed for seamount segment...",
+    "06:38:05 [PHYSICS] Projected drift path intersecting marine coordinate bounds.",
+    "06:38:06 [SAR] Commencing search-and-rescue vessel alignment.",
+    "06:38:08 [STATUS] 120 nodes active. Tactical coordinate database synced."
+  ]);
+
+  // Handle active command log ticks on EOC console
+  useEffect(() => {
+    const LOG_POOL = [
+      "[NASA_EONET] Severe Storm feed parsed: 4 active cyclones monitored.",
+      "[TLE_API] Sentinel-2A NORAD element sets loaded. Recalculating orbital pass.",
+      "[SIGHTENGINE] Neural photo-forensics filter active. 0 hoax warnings flagged.",
+      "[METEO] Marine wind speed at active grid registered at 14.5 m/s.",
+      "[ACOUSTIC] Passive Sonar SNR calculation complete. Ray refraction locked.",
+      "[DISPATCH] USCG box spiral grid aligned at drift epicenter.",
+      "[BATHYMETRY] Seamount ridge shadow zone identified. Sound speed minimum verified.",
+      "[SAR] Dynamic sweep ETA updated to 1.8 hours (Quiet Mode Active).",
+      "[SYS] Telemetry database synced against global transponder logs."
+    ];
+
+    const interval = setInterval(() => {
+      const timeStr = new Date().toLocaleTimeString("en-GB", { hour12: false });
+      const randomMsg = LOG_POOL[Math.floor(Math.random() * LOG_POOL.length)];
+      setConsoleLogs((prev) => {
+        const next = [...prev, `${timeStr} ${randomMsg}`];
+        if (next.length > 8) next.shift(); // keep it constrained to vertical space
+        return next;
+      });
+    }, 4500);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // Stop audio on unmount
   useEffect(() => {
@@ -423,9 +459,9 @@ export default function Home() {
   };
 
   return (
-    <div className="relative min-h-screen bg-[#030712] overflow-x-hidden flex flex-col justify-between selection:bg-red-500/20 selection:text-red-300">
+    <div className="relative min-h-screen bg-[#030712] overflow-x-hidden flex flex-col justify-between selection:bg-cyan-500/20 selection:text-cyan-300 tech-grid-bg">
       
-      {/* CSS Keyframes for Marquee */}
+      {/* CSS Keyframes for Marquee and Blueprint Background */}
       <style>{`
         @keyframes marquee {
           0% { transform: translateX(0%); }
@@ -433,7 +469,13 @@ export default function Home() {
         }
         .animate-marquee {
           display: inline-block;
-          animation: marquee 25s linear infinite;
+          animation: marquee 28s linear infinite;
+        }
+        .tech-grid-bg {
+          background-image: 
+            linear-gradient(rgba(6, 182, 212, 0.015) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(6, 182, 212, 0.015) 1px, transparent 1px);
+          background-size: 32px 32px;
         }
       `}</style>
 
@@ -445,74 +487,40 @@ export default function Home() {
       <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-slate-950/40 rounded-full blur-[130px] pointer-events-none z-0" />
       <div className="absolute top-1/3 right-1/4 w-[700px] h-[700px] bg-slate-950/30 rounded-full blur-[160px] pointer-events-none z-0" />
 
-      {/* Glassmorphic Navbar */}
-      <header className="relative w-full z-50 border-b border-red-950/40 bg-[#030712]/55 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-red-700 to-red-500 flex items-center justify-center shadow-lg shadow-red-500/20">
-              <Radio className="w-5 h-5 text-white animate-pulse" />
-            </div>
-            <span className="text-xl font-bold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-slate-100 to-slate-300 font-mono">
-              WRECK LINK
-            </span>
-          </div>
-
-          <nav className="hidden md:flex items-center gap-8 font-sans">
-            <Link
-              href="/live-map"
-              className="text-sm font-semibold tracking-wide text-slate-300 hover:text-red-400 transition-colors duration-300"
-            >
-              LIVE_MAP
-            </Link>
-            <Link
-              href="/public-alarms"
-              className="text-sm font-semibold tracking-wide text-slate-300 hover:text-red-400 transition-colors duration-300"
-            >
-              PUBLIC_ALARMS
-            </Link>
-            <Link
-              href="/web-alerts"
-              className="text-sm font-semibold tracking-wide text-slate-300 hover:text-red-400 transition-colors duration-300"
-            >
-              WEB_ALERTS
-            </Link>
-          </nav>
-
-          <div className="flex items-center gap-4">
-            {/* Auditory Caution Warning System Control Toggle */}
-            <button
-              onClick={toggleAudioAlerts}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-mono tracking-wider border cursor-pointer transition-all duration-300 ${
-                audioActive 
-                  ? "bg-red-900/40 border-red-500/60 text-red-300 shadow-[0_0_10px_rgba(239,68,68,0.2)] animate-pulse"
-                  : "bg-stone-900/60 border-stone-800 text-stone-400 hover:text-stone-200"
-              }`}
-            >
-              {audioActive ? (
-                <>
-                  <Volume2 className="w-3.5 h-3.5 text-red-400" />
-                  AUDIO ALARM SYNCED
-                </>
-              ) : (
-                <>
-                  <VolumeX className="w-3.5 h-3.5" />
-                  ALARM MUTED (CLICK TO SYNC)
-                </>
-              )}
-            </button>
-            
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-mono tracking-wider bg-red-950/40 border border-red-900/50 text-red-400">
-              <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
-              SYSTEM_ALERT_ACTIVE
-            </span>
-          </div>
-        </div>
-      </header>
+      {/* Premium Framer-Motion Animated Navigation Bar */}
+      <NavHeader>
+        {/* Auditory Caution Warning System Control Toggle */}
+        <button
+          onClick={toggleAudioAlerts}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[9px] font-mono tracking-wider border cursor-pointer transition-all duration-300 ${
+            audioActive 
+              ? "bg-cyan-950/40 border-cyan-800/60 text-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.2)] animate-pulse"
+              : "bg-slate-950/40 border-blue-950/40 text-slate-500 hover:text-slate-350"
+          }`}
+        >
+          {audioActive ? (
+            <>
+              <Volume2 className="w-3 h-3 text-cyan-400" />
+              AUDIO ALARM SYNCED
+            </>
+          ) : (
+            <>
+              <VolumeX className="w-3 h-3" />
+              ALARM MUTED (CLICK TO SYNC)
+            </>
+          )}
+        </button>
+        
+        <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[9px] font-mono tracking-wider bg-blue-950/40 border border-blue-900/50 text-cyan-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+          SYSTEM_ONLINE
+        </span>
+      </NavHeader>
 
       {/* Flashing warning marquee banner */}
-      <div className="w-full bg-red-950/20 border-b border-red-950/50 py-2.5 overflow-hidden whitespace-nowrap z-30 relative select-none">
-        <div className="animate-marquee font-mono text-[10px] text-red-500/90 tracking-widest uppercase">
-          [ACTIVE DEVIATION SIMULATOR] PREDICTING FLIGHT GLIDE STABILITY -- SCANNING CFIT HIGH-RISK TERRAIN ZONES -- WEATHER ANOMALY ALERTS -- SEARCH & RESCUE COORDINATION ACTIVE -- [ACTIVE DEVIATION SIMULATOR] PREDICTING FLIGHT GLIDE STABILITY -- SCANNING CFIT HIGH-RISK TERRAIN ZONES -- WEATHER ANOMALY ALERTS -- SEARCH & RESCUE COORDINATION ACTIVE --
+      <div className="w-full bg-cyan-950/15 border-b border-cyan-500/20 py-2.5 overflow-hidden whitespace-nowrap z-30 relative select-none crt-screen">
+        <div className="animate-marquee font-mono text-[10px] text-cyan-400/90 tracking-widest uppercase text-glow">
+          [EOC TACTICAL DATA FEEDS ACTIVE] -- FUSING LIVE NASA EONET WEATHER ANOMALIES -- LOADING SENTINEL RAW TELEMETRY CORRELATIONS (TLE) -- RUNNING ACTIVE MACKENZIE SONAR PROPAGATION PATHS -- BLOCKING CROWD-SOURCED IMAGE HOAXES VIA NEURAL FORENSICS -- [EOC TACTICAL DATA FEEDS ACTIVE] -- FUSING LIVE NASA EONET WEATHER ANOMALIES -- LOADING SENTINEL RAW TELEMETRY CORRELATIONS (TLE) -- RUNNING ACTIVE MACKENZIE SONAR PROPAGATION PATHS -- BLOCKING CROWD-SOURCED IMAGE HOAXES VIA NEURAL FORENSICS --
         </div>
       </div>
 
@@ -527,50 +535,58 @@ export default function Home() {
             transition={{ duration: 0.8 }}
             className="space-y-6"
           >
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-red-950/30 border border-red-900/40 text-xs font-mono tracking-widest text-red-400 animate-pulse">
-              <ShieldAlert className="w-4 h-4 text-red-500" />
-              AIRSPACE SAFETY & GLIDE ANGLE SIMULATIONS
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-cyan-950/30 border border-blue-900/40 text-xs font-mono tracking-widest text-cyan-400">
+              <ShieldAlert className="w-4 h-4 text-cyan-400" />
+              FLIGHT TELEMETRY & BLACKBOX SEARCH COMMAND
             </div>
 
-            <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-none text-slate-100 font-mono text-glow">
+            <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-none text-slate-100 font-mono">
               Wreck Link
             </h1>
 
             <h2 className="text-lg md:text-xl font-semibold tracking-wide text-slate-200 font-mono uppercase mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 leading-relaxed">
-              Check whether you can <span className="font-['Nosifer'] text-4xl md:text-5xl tracking-widest text-red-500 drop-shadow-[0_0_15px_rgba(239,68,68,0.95)] animate-pulse inline-block mx-2">SURVIVE</span> your next flight
+              Precision oceanographic ray-tracing and debris drift trajectory modeling
             </h2>
 
             <p className="text-sm md:text-base font-sans tracking-wide text-slate-400 max-w-lg leading-relaxed font-mono uppercase">
-              Analyzing telemetry link loss, Controlled Flight Into Terrain (CFIT) zones, and tracking severe weather anomalies.
+              Solving deep-sea acoustic shadow zones, calculating dynamic sound speed profiles, and tracking severe weather anomalies.
             </p>
 
-            <div className="w-16 h-[2px] bg-gradient-to-r from-red-500 to-transparent" />
+            <div className="w-16 h-[2px] bg-gradient-to-r from-cyan-500 to-transparent" />
 
             <div className="pt-2 flex items-center gap-4">
               <Link href="/live-map">
-                <button className="px-6 py-3 rounded-lg bg-gradient-to-r from-red-700 to-red-900 hover:from-red-600 hover:to-red-800 text-white font-semibold text-xs tracking-widest font-mono border border-red-500/30 shadow-lg shadow-red-500/20 hover:shadow-red-500/30 transition-all duration-300 flex items-center gap-2 group cursor-pointer">
-                  ENTER PLATFORM
-                  <CornerRightDown className="w-4 h-4 text-red-200 group-hover:translate-y-0.5 transition-transform duration-300 animate-bounce" />
+                <button className="px-6 py-3 rounded-lg bg-gradient-to-r from-cyan-700 to-blue-900 hover:from-cyan-600 hover:to-blue-800 text-white font-semibold text-xs tracking-widest font-mono border border-cyan-500/30 shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/30 transition-all duration-300 flex items-center gap-2 group cursor-pointer">
+                  ENTER TACTICAL RADAR
+                  <CornerRightDown className="w-4 h-4 text-cyan-200 group-hover:translate-y-0.5 transition-transform duration-300 animate-bounce" />
                 </button>
               </Link>
             </div>
 
-            {/* Airspace Telemetry Status Console */}
+            {/* Tactical Search & Salvage Status Console */}
             <div className="pt-2">
-              <div className="p-4 rounded-xl border border-red-500/30 bg-red-950/15 text-xs font-mono text-red-400 space-y-2 max-w-lg border-l-4 border-l-red-500 shadow-md">
-                <div className="flex items-center justify-between font-bold text-red-500 border-b border-red-950/40 pb-1.5 mb-2">
+              <div className="p-4 rounded-xl border border-cyan-500/30 bg-cyan-950/15 text-xs font-mono text-cyan-400 space-y-2 max-w-lg border-l-4 border-l-cyan-500 shadow-md crt-screen">
+                <div className="flex items-center justify-between font-bold text-cyan-500 border-b border-cyan-950/40 pb-1.5 mb-2">
                   <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                    DEVIATION SCANNER: SECURE_LINK_ACTIVE
+                    <span className="w-2 h-2 rounded-full bg-cyan-500 animate-ping" />
+                    SALVAGE MONITORS: SEARCH_ACTIVE
                   </div>
-                  <span className="text-[10px] bg-red-950/80 px-1.5 py-0.5 rounded text-red-400 border border-red-900/40 font-mono">SIGNAL_LOCK</span>
+                  <span className="text-[10px] bg-cyan-950/80 px-1.5 py-0.5 rounded text-cyan-400 border border-cyan-900/40 font-mono text-glow">SONAR_LOCK</span>
                 </div>
                 <div className="space-y-1.5 max-h-[110px] overflow-y-auto pr-1">
-                  <p className="text-[10px] text-red-300/80"><span className="text-red-500 font-bold">14:02:11 [ATC]</span> Telemetry divergence detected on transponder route.</p>
-                  <p className="text-[10px] text-red-300/80"><span className="text-red-500 font-bold">14:02:13 [SYSTEM]</span> Initiating primary radar coordinate check...</p>
-                  <p className="text-[10px] text-red-400 animate-pulse font-bold"><span className="text-red-500 font-bold">14:02:15 [PHYSICS]</span> Projected glide path intersecting risk coordinates.</p>
-                  <p className="text-[10px] text-red-300/80"><span className="text-red-500 font-bold">14:02:16 [ATC]</span> Commencing search-and-rescue vector alignment.</p>
-                  <p className="text-[10px] text-red-500/90 font-bold"><span className="text-red-500 font-bold">14:02:18 [STATUS]</span> 120 tracks active. Tactical coordinate database synced.</p>
+                  {consoleLogs.map((log, idx) => {
+                    const parts = log.split(" ");
+                    const timestamp = parts[0];
+                    const tag = parts[1];
+                    const message = parts.slice(2).join(" ");
+                    
+                    const isAlert = tag.includes("PHYSICS") || tag.includes("STATUS") || tag.includes("SYS") || tag.includes("DISPATCH") || tag.includes("SYS");
+                    return (
+                      <p key={idx} className={`text-[10px] leading-relaxed ${isAlert ? "text-cyan-300 font-bold" : "text-cyan-400/80"}`}>
+                        <span className="text-cyan-500 font-bold">{timestamp} {tag}</span> {message}
+                      </p>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -578,12 +594,12 @@ export default function Home() {
         </div>
 
         {/* Right Side: 3D Spline Canvas */}
-        <div className="lg:col-span-7 relative h-[450px] md:h-[600px] w-full rounded-2xl border border-red-500/20 bg-[#070e1b]/40 backdrop-blur-sm overflow-hidden flex items-center justify-center shadow-lg shadow-red-950/20 crt-screen">
+        <div className="lg:col-span-7 relative h-[450px] md:h-[600px] w-full rounded-2xl border border-cyan-500/20 bg-[#020617]/40 backdrop-blur-sm overflow-hidden flex items-center justify-center shadow-lg shadow-blue-950/20 crt-screen">
           
           {/* Loading Indicator */}
           {!splineLoaded && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#030712]/90 z-20">
-              <div className="w-10 h-10 border-2 border-red-500/20 border-t-red-500 rounded-full animate-spin" />
+              <div className="w-10 h-10 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin" />
               <span className="text-[10px] font-mono tracking-widest text-slate-500">INITIALIZING 3D TELEMETRY MATRIX...</span>
             </div>
           )}
@@ -601,60 +617,46 @@ export default function Home() {
 
       </main>
 
-      <section className="relative w-full max-w-7xl mx-auto px-6 py-16 border-t border-red-950/40 z-10">
+      <section className="relative w-full max-w-7xl mx-auto px-6 py-16 border-t border-blue-950/40 z-10">
         
         <div className="mb-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
-            <span className="text-xs font-mono tracking-wider text-red-500 uppercase font-bold bg-red-950/30 px-2.5 py-1 rounded border border-red-900/30">TACTICAL RADAR CHANNELS</span>
-            <div className="w-12 h-[1px] bg-red-500 mt-2" />
+            <span className="text-xs font-mono tracking-wider text-cyan-400 uppercase font-bold bg-cyan-950/30 px-2.5 py-1 rounded border border-cyan-900/30">CORE TACTICAL ENGINES (SYSTEM USPs)</span>
+            <div className="w-12 h-[1px] bg-cyan-500 mt-2" />
           </div>
-          <span className="text-xs font-mono tracking-wider text-slate-500 bg-stone-900/40 px-2 py-1 rounded border border-stone-800 font-mono">DISTRESS PROBABILITY RATE: HIGH</span>
+          <span className="text-xs font-mono tracking-wider text-slate-500 bg-stone-900/40 px-2 py-1 rounded border border-stone-800 font-mono">SYSTEM UNIQUE PROPOSITIONS: SECURED</span>
         </div>
 
-        {/* 6 Premium Dynamic 3D Module Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
+        {/* 4 Premium Dynamic 3D USP Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           
           {[
             { 
-              id: "DANGER_ZONE_LINK", 
-              title: "Telemetry Tracking",
-              desc: "Global real-time tracking of commercial flights and transponder anomaly vectoring.",
+              id: "SENTINEL_SAR_RADAR", 
+              title: "Sentinel-1 SAR Radar",
+              desc: "Cloud-Penetrator active C-band microwave mapping (5.405 GHz) to bypass storm cloud decks and absolute darkness, tracing metal debris and calm oil slicks.",
               icon: Radio,
               link: "/live-map"
             },
             { 
-              id: "WRECKAGE_DETECTOR", 
-              title: "Visual Verification",
-              desc: "Upload crowd-sourced alarm imagery to classify impact wreckage using visual models.",
-              icon: Activity,
-              link: "/public-alarms"
+              id: "SONAR_LOSS_HEATMAP", 
+              title: "Passive Sonar Heatmap",
+              desc: "Models subsurface sound refraction (Snell's Law) and volcanic seamount blind shadow zones, calculating decibel propagation loss under active vs. muted engine states.",
+              icon: Volume2,
+              link: "/live-map"
             },
             { 
-              id: "DEATH_ZONE_COORD", 
-              title: "Distress Coordinator",
-              desc: "Correlate visual confirmation against telemetry database for maritime coordination.",
+              id: "NEURAL_PHOTO_FORENSICS", 
+              title: "Neural Photo-Forensics",
+              desc: "Sightengine live API integration triaging coordinate reports in real-time, executing neural forensic validation filters to block out generated AI hoaxes.",
               icon: ShieldAlert,
               link: "/public-alarms"
             },
             { 
-              id: "FEEDS_SCRAPER", 
-              title: "Autonomous Scanners",
-              desc: "Scrape real-time stream feeds and social channels to pick up early disaster signals.",
-              icon: Cpu,
-              link: "/web-alerts"
-            },
-            {
-              id: "IMPACT_VECTOR_ENG",
-              title: "Impact Physics Engine",
-              desc: "Aeronautical glide vectors and leeway drift calculations.",
-              icon: Compass,
-              link: "/live-map"
-            },
-            {
-              id: "SURVIVABILITY_RATING",
-              title: "Precision Drift Solver",
-              desc: "Computes glide projections and leeway drift vectors to locate debris & survivors.",
-              icon: Target,
+              id: "TELEMETRY_DRIFT_SOLVER", 
+              title: "Distress Drift Solver",
+              desc: "Correlates commercial transponder anomaly link-losses, gliding descent curves (PIP), and live wind-driven 6H/24H/48H/72H leeway debris drift coordinates.",
+              icon: Activity,
               link: "/live-map"
             }
           ].map((card) => (
@@ -672,13 +674,13 @@ export default function Home() {
       </section>
 
       {/* Footer */}
-      <footer className="w-full py-8 border-t border-red-950/30 bg-[#02050d] text-center z-10 font-mono">
+      <footer className="w-full py-8 border-t border-blue-950/30 bg-[#000000] text-center z-10 font-mono">
         <div className="max-w-7xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-xs tracking-wider text-slate-500">
-            &copy; 2026 WRECK LINK. EMERGENCY COCKPIT RADAR SYSTEM VERIFIED.
+            &copy; 2026 WRECK LINK. NEXT-GEN FLIGHT DEVIATION & BLACKBOX SEARCH COMMAND CENTRE.
           </p>
           <div className="flex gap-6">
-            <span className="text-xs tracking-wider text-red-500/80 animate-pulse bg-red-950/30 border border-red-950/60 px-2 py-0.5 rounded">SECURE SHELL v2.4 (GPWS LINK)</span>
+            <span className="text-xs tracking-wider text-cyan-400/80 animate-pulse bg-cyan-950/30 border border-cyan-955/60 px-2 py-0.5 rounded">SECURE SEARCH NETWORK VERIFIED (ACOUSTIC RAY INTERCEPTOR)</span>
           </div>
         </div>
       </footer>

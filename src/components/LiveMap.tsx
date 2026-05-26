@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { MapContainer, TileLayer, Marker, useMap, Polyline, Circle, Popup, Tooltip } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, useMap, Polyline, Circle, Popup, Tooltip, Rectangle } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Search, Compass, Info, X, Navigation, Radio, Activity, ShieldAlert, Cpu, CornerRightDown } from "lucide-react";
@@ -186,13 +186,34 @@ export default function LiveMap() {
   const [selectedFlightPath, setSelectedFlightPath] = useState<[number, number][]>([]);
 
   // Satellite layers state
-  const [satelliteLayerType, setSatelliteLayerType] = useState<"off" | "daily" | "highres" | "bathymetry">("off");
+  const [satelliteLayerType, setSatelliteLayerType] = useState<"off" | "daily" | "highres" | "bathymetry" | "sar_radar">("off");
   const [satelliteDateStr, setSatelliteDateStr] = useState<string>("");
   const [hydrophoneDepth, setHydrophoneDepth] = useState<number>(150);
+  const [enginesMuted, setEnginesMuted] = useState<boolean>(false);
+  const [is3DSlicer, setIs3DSlicer] = useState<boolean>(false);
+  const [stormCells, setStormCells] = useState<any[]>(GLOBAL_STORM_CELLS);
   useEffect(() => {
     const date = new Date();
     date.setDate(date.getDate() - 2); // 2 days ago to ensure complete NASA global composites
     setSatelliteDateStr(date.toISOString().split('T')[0]);
+  }, []);
+
+  // Fetch live storms from NASA EONET API
+  useEffect(() => {
+    const fetchLiveStorms = async () => {
+      try {
+        const res = await fetch("/api/storms");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.storms && data.storms.length > 0) {
+            setStormCells(data.storms);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to fetch live NASA EONET storms, using fallback storm cells:", err);
+      }
+    };
+    fetchLiveStorms();
   }, []);
 
   // Dynamic Acoustic Ray-Tracing calculations
@@ -266,16 +287,20 @@ export default function LiveMap() {
     }
     
     // Ray Trace calculations using Snell's Law and Terrain collision checking
-    const rays: { angle: number; path: [number, number][]; collides: boolean; collisionX?: number; collisionY?: number }[] = [];
+    const rays: { angle: number; path: { x: number; z: number; dist: number; tl: number; snr: number }[]; collides: boolean; collisionX?: number; collisionY?: number }[] = [];
     const launchAngles = [-85, -70, -55, -40, -25, -10, 0, 10, 25, 40, 55, 70, 85];
+    
+    let blockedRays = 0;
     
     if (ssp.length > 1) {
       const c_seafloor = ssp[ssp.length - 1].speed;
+      const initial_NL = enginesMuted ? 45.0 : 75.0; // 45 dB (quiet) vs 75 dB (loud engines)
       
       for (const launchAngleDeg of launchAngles) {
-        const path: [number, number][] = [];
+        const path: { x: number; z: number; dist: number; tl: number; snr: number }[] = [];
         let x = 0;
         let z = maxDepth;
+        let dist = 0.0;
         let collides = false;
         let collisionX = 0;
         let collisionY = 0;
@@ -283,7 +308,7 @@ export default function LiveMap() {
         const theta_0 = (90 - launchAngleDeg) * Math.PI / 180;
         const initial_cos = Math.cos(theta_0);
         
-        path.push([x, z]);
+        path.push({ x, z, dist, tl: 0.0, snr: 160.0 - initial_NL + 10.0 });
         
         for (let idx = ssp.length - 2; idx >= 0; idx--) {
           const target_depth = ssp[idx].depth;
@@ -291,7 +316,6 @@ export default function LiveMap() {
           
           const cos_theta = c_current * (initial_cos / c_seafloor);
           if (Math.abs(cos_theta) > 1.0) {
-            // Total refraction/reflection
             break;
           }
           
@@ -299,20 +323,31 @@ export default function LiveMap() {
           const dz = stepSize;
           const dx = dz / Math.tan(current_angle);
           
-          x += Math.abs(dx) * Math.sign(initial_cos);
-          z = target_depth;
+          const stepX = Math.abs(dx) * Math.sign(initial_cos);
+          const stepZ = target_depth;
+          
+          const segment_len = Math.sqrt(stepX * stepX + dz * dz);
+          dist += segment_len;
+          
+          // Transmission loss & SNR: SL = 160dB, NL = variable, DI = 10dB
+          const tl = 20 * Math.log10(Math.max(dist, 1.0)) + 0.008 * dist;
+          const snr = 160.0 - tl - initial_NL + 10.0;
+          
+          x += stepX;
+          z = stepZ;
           
           // Verify terrain intersection
           const currentSeafloor = getSeafloorDepth(x);
           if (z >= currentSeafloor) {
             collides = true;
+            blockedRays++;
             collisionX = x;
             collisionY = currentSeafloor;
-            path.push([x, currentSeafloor]);
+            path.push({ x, z: currentSeafloor, dist, tl, snr });
             break;
           }
           
-          path.push([x, z]);
+          path.push({ x, z, dist, tl, snr });
         }
         rays.push({ angle: launchAngleDeg, path, collides, collisionX, collisionY });
       }
@@ -328,11 +363,156 @@ export default function LiveMap() {
     const sofarDepth = ssp.length > 0 ? ssp[minSpeedIdx].depth : 0;
     
     // Calculate Terrain Obstruction Index
-    const blockedRays = rays.filter(r => r.collides).length;
     const obstructionIndex = rays.length > 0 ? Math.round((blockedRays / rays.length) * 100) : 0;
     
-    return { ssp, rays, sofarDepth, maxDepth, salinity, getSeafloorDepth, obstructionIndex };
-  }, [surfaceTemp, simulationData]);
+    // Calculate local SNR and TL at the Hydrophone sensor (X = 3060m, Z = hydrophoneDepth)
+    let bestDistance = Infinity;
+    let targetTL = 140.0; // default total absorption
+    let targetSNR = -99.9;
+    
+    rays.forEach((ray) => {
+      ray.path.forEach((pt) => {
+        const dx = pt.x - 3060;
+        const dz = pt.z - hydrophoneDepth;
+        const distToSensor = Math.sqrt(dx * dx + dz * dz);
+        if (distToSensor < bestDistance) {
+          bestDistance = distToSensor;
+          targetTL = pt.tl;
+          targetSNR = pt.snr;
+        }
+      });
+    });
+    
+    if (bestDistance > 400 || obstructionIndex === 100) {
+      targetSNR = -99.9;
+      targetTL = 140.0;
+    }
+    
+    return { ssp, rays, sofarDepth, maxDepth, salinity, getSeafloorDepth, obstructionIndex, targetTL, targetSNR };
+  }, [surfaceTemp, simulationData, enginesMuted, hydrophoneDepth]);
+
+  // Web Audio Context & Refs for active dynamic sonification
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const lastPingTimeRef = useRef<number>(0);
+
+  const triggerSonification = React.useCallback((depth: number) => {
+    try {
+      if (typeof window === "undefined") return;
+      if (!audioCtxRef.current) {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioContextClass) return;
+        audioCtxRef.current = new AudioContextClass();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === "suspended") {
+        ctx.resume();
+      }
+
+      const now = ctx.currentTime;
+      if (now - lastPingTimeRef.current < 0.12) return; // rate limit to avoid clipping
+      lastPingTimeRef.current = now;
+
+      const { targetSNR, sofarDepth, maxDepth } = acousticData;
+      if (targetSNR <= -90) return; // 1. Completely silent inside shadow zone
+
+      let baseFreq = 800;
+      if (maxDepth > 500) {
+        const distToSofar = Math.abs(depth - sofarDepth);
+        if (distToSofar < 200) {
+          // Inside SOFAR channel: frequency pitch rises up to 1200Hz
+          baseFreq = 800 + (1 - distToSofar / 200) * 400;
+        } else if (depth > 1400) {
+          // Deep Direct Path: lower pitch
+          baseFreq = 650;
+        }
+      } else {
+        // Shallow water: slight pitch scale
+        baseFreq = 800 + (depth / (maxDepth || 1)) * 200;
+      }
+
+      // Volume scaling by active SNR
+      let volume = 0.02;
+      if (targetSNR > -15) {
+        volume = 0.02 + Math.min(1, Math.max(0, (targetSNR + 15) / 45)) * 0.23;
+      }
+      if (!enginesMuted) {
+        volume *= 0.15; // ship engines noise drowns signal by 85%
+      }
+
+      // Play oscillator ping
+      let duration = 0.08;
+      if (maxDepth > 500 && Math.abs(depth - sofarDepth) < 200) {
+        duration = 0.18; // longer ping in SOFAR duct
+      } else if (maxDepth > 500 && depth > 1400) {
+        duration = 0.14; // crisp deep path ping
+      }
+
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(baseFreq, now);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.6, now + duration);
+
+      gainNode.gain.setValueAtTime(volume, now);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+      osc.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + duration);
+
+      // Synthesize transitional static or engine ambient noise hiss
+      const needsStatic = (maxDepth > 500 && (Math.abs(depth - sofarDepth) >= 200 && depth <= 1400)) || !enginesMuted;
+      if (needsStatic) {
+        const bufferSize = ctx.sampleRate * 0.1;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = ctx.createBufferSource();
+        noise.buffer = buffer;
+
+        const noiseGain = ctx.createGain();
+        let noiseVolume = 0.01;
+        if (!enginesMuted) {
+          noiseVolume = 0.04; // ship rumble/hiss
+        } else if (targetSNR < 10) {
+          noiseVolume = 0.02 * (1 - Math.max(0, targetSNR) / 10);
+        }
+
+        noiseGain.gain.setValueAtTime(noiseVolume, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
+
+        const filter = ctx.createBiquadFilter();
+        if (!enginesMuted) {
+          filter.type = "lowpass";
+          filter.frequency.setValueAtTime(150, now);
+        } else {
+          filter.type = "highpass";
+          filter.frequency.setValueAtTime(1000, now);
+        }
+
+        noise.connect(filter);
+        filter.connect(noiseGain);
+        noiseGain.connect(ctx.destination);
+        noise.start(now);
+        noise.stop(now + 0.1);
+      }
+    } catch (err) {
+      console.warn("Acoustic sonification audio play error:", err);
+    }
+  }, [acousticData, enginesMuted]);
+
+  // Trigger sonification automatically when depth is updated programmatically or via slider drag
+  useEffect(() => {
+    if (hydrophoneDepth === 150 || hydrophoneDepth === 0 || hydrophoneDepth === 5 || hydrophoneDepth === 20) {
+      return; // prevent sound pings on initial mount or preset case resets
+    }
+    triggerSonification(hydrophoneDepth);
+  }, [hydrophoneDepth, triggerSonification]);
 
   // Live Warnings Feed state
   const [signalLossFeed, setSignalLossFeed] = useState<any[]>([
@@ -370,11 +550,11 @@ export default function LiveMap() {
       return iconCacheRef.current[cacheKey];
     }
 
-    const color = isSelected ? "#ef4444" : isAtRisk ? "#f97316" : "#cbd5e1";
+    const color = isSelected ? "#06b6d4" : isAtRisk ? "#38bdf8" : "#cbd5e1";
     const glow = isSelected 
-      ? "drop-shadow(0 0 8px rgba(239,68,68,0.95))" 
+      ? "drop-shadow(0 0 8px rgba(6,182,212,0.95))" 
       : isAtRisk 
-      ? "drop-shadow(0 0 6px rgba(249,115,22,0.85))"
+      ? "drop-shadow(0 0 6px rgba(56,189,248,0.85))"
       : "drop-shadow(0 0 2px rgba(0,0,0,0.5))";
     const size = isSelected ? 28 : isAtRisk ? 25 : 22;
 
@@ -400,8 +580,8 @@ export default function LiveMap() {
   // Custom icons for impact and drift
   const getShipIcon = (typeCode: number) => {
     const isRescue = typeCode === 51;
-    const color = isRescue ? "#f59e0b" : "#d97706"; // emerald for rescue, teal for other ships
-    const glow = isRescue ? "drop-shadow(0 0 6px rgba(245,158,11,0.9))" : "drop-shadow(0 0 4px rgba(217,119,6,0.6))";
+    const color = isRescue ? "#38bdf8" : "#1e40af"; // sky blue for rescue, navy blue for other ships
+    const glow = isRescue ? "drop-shadow(0 0 6px rgba(56,189,248,0.9))" : "drop-shadow(0 0 4px rgba(30,64,175,0.6))";
     
     return L.divIcon({
       html: `
@@ -421,8 +601,8 @@ export default function LiveMap() {
     return L.divIcon({
       html: `
         <div style="position: relative; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px;">
-          <div style="position: absolute; width: 24px; height: 24px; border-radius: 50%; background: rgba(239,68,68,0.4); animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
-          <div style="position: relative; width: 10px; height: 10px; border-radius: 50%; background: #ef4444; border: 1.5px solid #ffffff; box-shadow: 0 0 6px rgba(239,68,68,0.8);"></div>
+          <div style="position: absolute; width: 24px; height: 24px; border-radius: 50%; background: rgba(6,182,212,0.4); animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+          <div style="position: relative; width: 10px; height: 10px; border-radius: 50%; background: #06b6d4; border: 1.5px solid #ffffff; box-shadow: 0 0 8px rgba(6,182,212,0.95);"></div>
         </div>
       `,
       className: "custom-impact-icon",
@@ -435,7 +615,7 @@ export default function LiveMap() {
     return L.divIcon({
       html: `
         <div style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; animation: pulse 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;">
-          <svg style="width: 24px; height: 24px; color: #fbbf24; filter: drop-shadow(0 0 5px rgba(251,191,36,0.9));" viewBox="0 0 24 24" fill="currentColor">
+          <svg style="width: 24px; height: 24px; color: #38bdf8; filter: drop-shadow(0 0 6px rgba(56,189,248,0.95));" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
           </svg>
         </div>
@@ -450,8 +630,8 @@ export default function LiveMap() {
     return L.divIcon({
       html: `
         <div style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; position: relative;">
-          <div style="position: absolute; width: 28px; height: 28px; border-radius: 50%; border: 1.5px dashed #f59e0b; animation: spin 20s linear infinite;"></div>
-          <span style="font-size: 9px; font-weight: bold; font-family: monospace; color: #fbbf24; background: #0c0303; border: 1px solid #d97706; padding: 2px 4px; border-radius: 3px; box-shadow: 0 0 5px rgba(251,191,36,0.8); z-index: 10;">+${hours}H</span>
+          <div style="position: absolute; width: 28px; height: 28px; border-radius: 50%; border: 1.5px dashed #38bdf8; animation: spin 20s linear infinite;"></div>
+          <span style="font-size: 9px; font-weight: bold; font-family: monospace; color: #38bdf8; background: #020617; border: 1px solid #1e3a8a; padding: 2px 4px; border-radius: 3px; box-shadow: 0 0 5px rgba(56,189,248,0.8); z-index: 10;">+${hours}H</span>
         </div>
       `,
       className: "custom-drift-step-icon",
@@ -461,8 +641,8 @@ export default function LiveMap() {
   };
 
   const getRiskZoneIcon = (isSelected: boolean) => {
-    const color = isSelected ? "#ef4444" : "#f97316";
-    const glow = isSelected ? "drop-shadow(0 0 8px rgba(239,68,68,0.9))" : "drop-shadow(0 0 4px rgba(249,115,22,0.6))";
+    const color = isSelected ? "#06b6d4" : "#38bdf8";
+    const glow = isSelected ? "drop-shadow(0 0 8px rgba(6,182,212,0.9))" : "drop-shadow(0 0 4px rgba(56,189,248,0.6))";
     
     return L.divIcon({
       html: `
@@ -482,7 +662,7 @@ export default function LiveMap() {
     return L.divIcon({
       html: `
         <div style="display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; animation: pulse 2s infinite;">
-          <svg style="width: 18px; height: 18px; color: #ea580c; filter: drop-shadow(0 0 4px rgba(234,88,12,0.8));" viewBox="0 0 24 24" fill="currentColor">
+          <svg style="width: 18px; height: 18px; color: #38bdf8; filter: drop-shadow(0 0 6px rgba(56,189,248,0.85));" viewBox="0 0 24 24" fill="currentColor">
             <path d="M19.36 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.64-4.96zM11.5 17v-3H9l4-6v3h2.5l-4 6z"/>
           </svg>
         </div>
@@ -492,6 +672,34 @@ export default function LiveMap() {
       iconAnchor: [12, 12]
     });
   };
+
+  // Marine Box Spiral Search Pattern (Expanding Square SS) centered on crash coords
+  const generateSpiralGrid = React.useCallback((center: [number, number], spacingKm = 0.5, steps = 15): [number, number][] => {
+    const coords: [number, number][] = [];
+    const [lat, lon] = center;
+    
+    // Spacing in degrees approximately
+    const latSpacing = spacingKm / 111.0;
+    const lonSpacing = spacingKm / (111.0 * Math.cos(lat * Math.PI / 180));
+    
+    let x = 0;
+    let y = 0;
+    let dx = 0;
+    let dy = -1;
+    
+    // Generate spiral steps
+    for (let i = 0; i < steps; i++) {
+      if (x === y || (x < 0 && x === -y) || (x > 0 && x === 1 - y)) {
+        const temp = dx;
+        dx = -dy;
+        dy = temp;
+      }
+      x += dx;
+      y += dy;
+      coords.push([lat + y * latSpacing, lon + x * lonSpacing]);
+    }
+    return coords;
+  }, []);
 
   const generateSimulatedPath = (flight: Flight): [number, number][] => {
     const path: [number, number][] = [];
@@ -1011,7 +1219,7 @@ export default function LiveMap() {
 
   // Helper to check if a flight is currently inside or approaching any active weather cells (within radius + 150km buffer)
   const isFlightAtRisk = (flight: Flight) => {
-    for (const cell of GLOBAL_STORM_CELLS) {
+    for (const cell of stormCells) {
       const dist = getCoordinateDistance(flight.latitude, flight.longitude, cell.lat, cell.lon);
       if (dist < (cell.radius / 1000) + 150) {
         return true;
@@ -1025,7 +1233,7 @@ export default function LiveMap() {
   let activeStormCell: any = null;
   
   if (selectedFlight) {
-    for (const cell of GLOBAL_STORM_CELLS) {
+    for (const cell of stormCells) {
       const distance = getCoordinateDistance(
         selectedFlight.latitude,
         selectedFlight.longitude,
@@ -1104,7 +1312,7 @@ export default function LiveMap() {
           
           <div className="flex flex-col gap-1.5 text-xs pt-1.5">
             <span className="text-slate-300 font-semibold tracking-wide block">Satellite Imagery Layer</span>
-            <div className="grid grid-cols-4 gap-1">
+            <div className="grid grid-cols-5 gap-1">
               <button
                 onClick={() => setSatelliteLayerType("off")}
                 className={`py-1 rounded font-mono text-[8px] font-bold border transition-all ${
@@ -1123,7 +1331,7 @@ export default function LiveMap() {
                     : "bg-slate-950/40 border-red-950/20 text-slate-500 hover:text-slate-400"
                 }`}
               >
-                DAILY (NASA)
+                DAILY
               </button>
               <button
                 onClick={() => setSatelliteLayerType("highres")}
@@ -1133,7 +1341,7 @@ export default function LiveMap() {
                     : "bg-slate-950/40 border-red-950/20 text-slate-500 hover:text-slate-400"
                 }`}
               >
-                HIGH-RES (ESRI)
+                HIGH-RES
               </button>
               <button
                 onClick={() => setSatelliteLayerType("bathymetry")}
@@ -1143,7 +1351,17 @@ export default function LiveMap() {
                     : "bg-slate-950/40 border-red-950/20 text-slate-500 hover:text-slate-400"
                 }`}
               >
-                BATHY (ESRI)
+                BATHY
+              </button>
+              <button
+                onClick={() => setSatelliteLayerType("sar_radar")}
+                className={`py-1 rounded font-mono text-[7px] font-bold border transition-all flex items-center justify-center leading-none ${
+                  satelliteLayerType === "sar_radar"
+                    ? "bg-purple-950/40 border-purple-800/60 text-purple-400 font-bold"
+                    : "bg-slate-950/40 border-red-950/20 text-slate-500 hover:text-slate-400"
+                }`}
+              >
+                🛰️ SAR
               </button>
             </div>
           </div>
@@ -1306,6 +1524,14 @@ export default function LiveMap() {
             </>
           )}
 
+          {satelliteLayerType === "sar_radar" && (
+            <TileLayer
+              attribution='&copy; ESA Sentinel-1 SAR active microwave backscatter'
+              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+              opacity={0.9}
+            />
+          )}
+
           {/* Render Ground Truth marker if Case Study is simulated */}
           {simulationData && simulationData.is_case_study && isValidLatLng(simulationData.ground_truth) && (
             <Marker
@@ -1402,9 +1628,9 @@ export default function LiveMap() {
             <Polyline
               positions={selectedFlightPath.filter(pt => isValidLatLng(pt)).map(pt => toLatLngArray(pt))}
               pathOptions={{
-                color: "#ef4444",
+                color: "#06b6d4",
                 weight: 3.5,
-                opacity: 0.7,
+                opacity: 0.75,
                 lineCap: "round",
                 lineJoin: "round"
               }}
@@ -1412,7 +1638,7 @@ export default function LiveMap() {
           )}
 
           {/* Render Weather Hazard Storm Cells */}
-          {showWeatherLayer && GLOBAL_STORM_CELLS.map((cell) => {
+          {showWeatherLayer && stormCells.map((cell) => {
             if (typeof cell.lat !== "number" || typeof cell.lon !== "number" || isNaN(cell.lat) || isNaN(cell.lon)) return null;
             return (
               <React.Fragment key={cell.id}>
@@ -1420,9 +1646,9 @@ export default function LiveMap() {
                   center={[cell.lat, cell.lon]}
                   radius={cell.radius}
                   pathOptions={{
-                    color: "#ea580c",
-                    fillColor: "#f97316",
-                    fillOpacity: 0.12,
+                    color: "#0ea5e9",
+                    fillColor: "#38bdf8",
+                    fillOpacity: 0.1,
                     weight: 1.5,
                     dashArray: "4, 6"
                   }}
@@ -1432,9 +1658,9 @@ export default function LiveMap() {
                   icon={getStormIcon()}
                 >
                   <Popup>
-                    <div className="p-2.5 font-mono text-xs bg-[#050101]/95 text-slate-200 border border-orange-950/80 rounded-lg shadow-xl space-y-1.5 select-none">
-                      <span className="block font-bold text-orange-500 border-b border-red-950/40 pb-1">{cell.name}</span>
-                      <span className="block text-[9px] text-red-400 uppercase font-bold">HAZARD LEVEL: CRITICAL</span>
+                    <div className="p-2.5 font-mono text-xs bg-[#020617]/95 text-slate-200 border border-blue-950/80 rounded-lg shadow-xl space-y-1.5 select-none">
+                      <span className="block font-bold text-cyan-400 border-b border-blue-950/40 pb-1">{cell.name}</span>
+                      <span className="block text-[9px] text-cyan-400 uppercase font-bold">HAZARD LEVEL: SIGNIFICANT</span>
                       <div className="pt-1 font-sans text-slate-300">
                         {cell.type}
                       </div>
@@ -1456,10 +1682,10 @@ export default function LiveMap() {
                     toLatLngArray(simulationData.impact_point)
                   ]}
                   pathOptions={{
-                    color: "#ef4444",
+                    color: "#06b6d4",
                     dashArray: "6, 6",
                     weight: 2.5,
-                    opacity: 0.8
+                    opacity: 0.85
                   }}
                 />
               )}
@@ -1474,7 +1700,7 @@ export default function LiveMap() {
                       ...simulationData.drift_trajectory.map((step: any) => toLatLngArray(step.coordinates))
                     ]}
                     pathOptions={{
-                      color: "#fbbf24",
+                      color: "#38bdf8",
                       dashArray: "4, 6",
                       weight: 3.5,
                       opacity: 0.9
@@ -1489,10 +1715,10 @@ export default function LiveMap() {
                       toLatLngArray(simulationData.drift_point)
                     ]}
                     pathOptions={{
-                      color: "#fbbf24",
+                      color: "#38bdf8",
                       dashArray: "4, 4",
                       weight: 2,
-                      opacity: 0.8
+                      opacity: 0.85
                     }}
                   />
                 )
@@ -1506,6 +1732,108 @@ export default function LiveMap() {
                 />
               )}
 
+              {/* 3.1. Sentinel-1 SAR Microwave Backscatter Grid Cells */}
+              {satelliteLayerType === "sar_radar" && isValidLatLng(simulationData.impact_point) && (
+                (() => {
+                  const center = toLatLngArray(simulationData.impact_point);
+                  const lat = center[0];
+                  const lng = center[1];
+                  
+                  // Generate a 5x5 microgrid representing simulated backscatter cells
+                  const cells = [];
+                  for (let i = -2; i <= 2; i++) {
+                    for (let j = -2; j <= 2; j++) {
+                      const dLat = i * 0.0035;
+                      const dLng = j * 0.004;
+                      
+                      // Add some dynamic pseudorandom behavior based on index
+                      const val = (Math.abs(i * j + i + j) % 5);
+                      let cellColor = "#334155"; // Slate (calm water)
+                      let cellOpacity = 0.15;
+                      let label = "Ambient Sea Clutter";
+                      let db = "-26.4 dB";
+                      
+                      if (i === 0 && j === 0) {
+                        cellColor = "#22d3ee"; // Cyan (Fuselage debris double-bounce)
+                        cellOpacity = 0.8;
+                        label = "Metallic Reflector (Fuselage Core)";
+                        db = "-11.8 dB (CRITICAL)";
+                      } else if (Math.abs(i) <= 1 && Math.abs(j) <= 1 && val === 2) {
+                        cellColor = "#fbbf24"; // Amber (wing fragment debris)
+                        cellOpacity = 0.6;
+                        label = "Debris Scatter (Wing Section)";
+                        db = "-14.2 dB";
+                      } else if (i === -1 && j === 2) {
+                        cellColor = "#2563eb"; // Blue (wave-damped oil slick)
+                        cellOpacity = 0.55;
+                        label = "Oil Slick Footprint (Calm Wave Damping)";
+                        db = "-28.8 dB";
+                      } else if (i === 1 && j === -1) {
+                        cellColor = "#06b6d4"; // Light Cyan (engine debris anomaly)
+                        cellOpacity = 0.65;
+                        label = "Debris Scatter (Turbine Casing)";
+                        db = "-13.5 dB";
+                      }
+                      
+                      cells.push({
+                        bounds: [
+                          [lat + dLat - 0.00175, lng + dLng - 0.002],
+                          [lat + dLat + 0.00175, lng + dLng + 0.002]
+                        ] as [[number, number], [number, number]],
+                        color: cellColor,
+                        opacity: cellOpacity,
+                        label,
+                        db
+                      });
+                    }
+                  }
+                  
+                  return (
+                    <>
+                      {/* Active Swath Boundary Circle */}
+                      <Circle
+                        center={center}
+                        radius={6000}
+                        pathOptions={{
+                          color: "#c084fc", // purple radar swath border
+                          fillColor: "#c084fc",
+                          fillOpacity: 0.02,
+                          dashArray: "3, 6",
+                          weight: 1.5
+                        }}
+                      />
+                      
+                      {/* Backscatter grid cells */}
+                      {cells.map((cell, idx) => (
+                        <Rectangle
+                          key={idx}
+                          bounds={cell.bounds}
+                          pathOptions={{
+                            color: cell.color,
+                            fillColor: cell.color,
+                            fillOpacity: cell.opacity,
+                            weight: 1,
+                            opacity: 0.4
+                          }}
+                        >
+                          <Popup>
+                            <div className="p-3 bg-[#020617] border border-blue-950 rounded font-mono text-[9px] text-slate-300 space-y-1 select-none">
+                              <span className="block font-bold text-cyan-400 uppercase">🛰️ Sentinel-1 SAR Backscatter</span>
+                              <div className="border-t border-blue-950/40 pt-1 space-y-0.5">
+                                <div>TARGET: <span className="text-white font-bold">{cell.label}</span></div>
+                                <div>COEF (sigma-0): <span className="text-cyan-300 font-bold">{cell.db}</span></div>
+                                <div>RESOLUTION: <span className="text-white font-bold">20m (IW Mode)</span></div>
+                                <div>ATMOSPHERE: <span className="text-green-400 font-bold">OPAQUE-PENETRATED</span></div>
+                              </div>
+                            </div>
+                          </Popup>
+                        </Rectangle>
+                      ))}
+                    </>
+                  );
+                })()
+              )}
+
               {/* 4. Drift Steps or Drift Center (DSAC) Marker */}
               {simulationData.drift_trajectory ? (
                 simulationData.drift_trajectory.map((step: any, idx: number) => {
@@ -1517,9 +1845,9 @@ export default function LiveMap() {
                         center={toLatLngArray(step.coordinates)}
                         radius={step.uncertainty_radius_km * 1000}
                         pathOptions={{
-                          color: idx === 0 ? "#fbbf24" : idx === 1 ? "#f59e0b" : "#ea580c",
-                          fillColor: idx === 0 ? "#fbbf24" : idx === 1 ? "#f59e0b" : "#ea580c",
-                          fillOpacity: 0.06,
+                          color: idx === 0 ? "#38bdf8" : idx === 1 ? "#0ea5e9" : "#06b6d4",
+                          fillColor: idx === 0 ? "#38bdf8" : idx === 1 ? "#0ea5e9" : "#06b6d4",
+                          fillOpacity: 0.05,
                           dashArray: "5, 5",
                           weight: 1.5
                         }}
@@ -1530,8 +1858,8 @@ export default function LiveMap() {
                         icon={getDriftIconForTime(step.time_hours)}
                       >
                         <Popup>
-                          <div className="p-3.5 font-mono text-[10px] bg-[#0c0303]/95 text-slate-200 border border-red-950/80 rounded-lg shadow-xl space-y-1.5 select-none min-w-[200px]">
-                            <span className="block font-bold text-amber-400 border-b border-red-950/40 pb-1 font-mono uppercase">PROJECTED DEBRIS STEP: +{step.time_hours}H</span>
+                          <div className="p-3.5 font-mono text-[10px] bg-[#020617]/95 text-slate-200 border border-blue-950/80 rounded-lg shadow-xl space-y-1.5 select-none min-w-[200px]">
+                            <span className="block font-bold text-cyan-400 border-b border-blue-950/40 pb-1 font-mono uppercase">PROJECTED DEBRIS STEP: +{step.time_hours}H</span>
                             <div className="space-y-1 text-slate-300">
                               <div className="flex justify-between">
                                 <span>DRIFT RANGE:</span>
@@ -1570,9 +1898,9 @@ export default function LiveMap() {
                       center={toLatLngArray(simulationData.drift_point)}
                       radius={5000} // 5km search zone
                       pathOptions={{
-                        color: "#fbbf24",
-                        fillColor: "#fbbf24",
-                        fillOpacity: 0.1,
+                        color: "#38bdf8",
+                        fillColor: "#38bdf8",
+                        fillOpacity: 0.08,
                         dashArray: "5, 5",
                         weight: 1.5
                       }}
@@ -1606,8 +1934,8 @@ export default function LiveMap() {
                 icon={getShipIcon(nearestVessel.typeCode)}
               >
                 <Popup>
-                  <div className="p-3 font-mono text-xs bg-[#050101]/95 text-slate-200 border border-red-950/80 rounded-lg shadow-xl space-y-1.5 select-none">
-                    <span className="block font-bold text-amber-400 border-b border-red-950/40 pb-1">{nearestVessel.name}</span>
+                  <div className="p-3 font-mono text-xs bg-[#020617]/95 text-slate-200 border border-blue-950/80 rounded-lg shadow-xl space-y-1.5 select-none">
+                    <span className="block font-bold text-cyan-400 border-b border-blue-950/40 pb-1">{nearestVessel.name}</span>
                     <span className="block text-[10px] text-slate-400 uppercase font-semibold">{nearestVessel.type}</span>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1">
                       <span className="text-slate-400">MMSI:</span>
@@ -1623,12 +1951,74 @@ export default function LiveMap() {
             </>
           )}
 
+          {/* USCG Expanding Box Spiral Search Grid centered on crash coordinates */}
+          {simulationData && simulationData.drift_point && simulationData.case_study_id !== "yeti" && (
+            <Polyline
+              positions={[simulationData.drift_point, ...generateSpiralGrid(simulationData.drift_point, 0.4, 30)]}
+              pathOptions={{
+                color: "#06b6d4",
+                dashArray: "4, 6",
+                weight: 1.5,
+                opacity: 0.75
+              }}
+            />
+          )}
+
+
           {/* Custom zoom / center movements controller */}
           <MapController 
             viewTarget={viewTarget} 
             onViewApplied={() => setViewTarget(null)} 
           />
         </MapContainer>
+
+        {/* Floating 🚢 Tactical Dispatch HUD Overlay */}
+        {simulationData && simulationData.case_study_id !== "yeti" && (
+          <div className="absolute bottom-4 left-4 z-[1000] bg-[#020617]/95 backdrop-blur-md border border-cyan-500/40 p-3.5 rounded-xl font-mono text-[9.5px] w-64 shadow-2xl space-y-2 text-slate-300 pointer-events-auto select-none crt-screen">
+            <div className="flex justify-between items-center border-b border-cyan-500/20 pb-1.5">
+              <span className="text-cyan-400 font-bold uppercase tracking-wider flex items-center gap-1.5 text-glow">
+                🚢 TACTICAL DISPATCH HUD
+              </span>
+              <span className="animate-pulse w-1.5 h-1.5 rounded-full bg-green-400"></span>
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex justify-between">
+                <span>PROPULSION MODE:</span>
+                <span className={`font-bold uppercase ${enginesMuted ? "text-green-400 text-glow" : "text-amber-400 animate-pulse"}`}>
+                  {enginesMuted ? "🤫 SILENT ELECTRIC (BATTERY)" : "⚙️ COMBINED DIESEL (CODAG)"}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>SWEEP SPEED:</span>
+                <span className="text-white font-bold">
+                  {enginesMuted ? "4.5 knots (Silent Sweep)" : "18.2 knots (Transit)"}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>SWEEP RATE:</span>
+                <span className="text-cyan-400 font-bold">
+                  {enginesMuted ? "2.5 km² / hr" : "0.5 km² / hr (Cavitation Blinded)"}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>SWEEP ETA (GRID COMPLETE):</span>
+                <span className="text-white font-bold font-mono">
+                  {enginesMuted ? "1.8 hours" : "7.2 hours (Noise-limited re-runs)"}
+                </span>
+              </div>
+              <div className="flex justify-between border-t border-cyan-500/10 pt-1.5">
+                <span>SONAR DETECTION P(D):</span>
+                <span className={`font-bold ${enginesMuted ? "text-green-400 text-glow" : "text-red-400"}`}>
+                  {enginesMuted ? "94.2% (DIRECT PATH MATCH)" : "12.8% (ACOUSTIC BLINDNESS)"}
+                </span>
+              </div>
+            </div>
+            <div className="border-t border-cyan-500/10 pt-1 flex justify-between items-center text-[7.5px] text-slate-500">
+              <span>DYNAMIC SWEEP VECTOR OPTIMIZED</span>
+              <span className="text-cyan-400 font-bold">GRID 2A</span>
+            </div>
+          </div>
+        )}
 
         {/* Floating High-Risk Terrain Zone Detail Panel (Left) */}
         {selectedRiskZone && (
@@ -1702,6 +2092,55 @@ export default function LiveMap() {
                 <X className="w-4 h-4" />
               </button>
             </div>
+
+            {/* Floating Sentinel-1 SAR Telemetry HUD Panel */}
+            {satelliteLayerType === "sar_radar" && (
+              <div className="absolute top-48 right-6 z-[1000] w-[260px] rounded-xl border border-purple-950/80 bg-[#020617]/95 backdrop-blur-md shadow-2xl p-4 space-y-3 font-mono text-[9px] text-left select-none">
+                <div className="flex items-center justify-between border-b border-purple-950/50 pb-2">
+                  <span className="text-purple-400 font-bold uppercase tracking-wider flex items-center gap-1 animate-pulse">
+                    🛰️ Sentinel-1 SAR HUD
+                  </span>
+                  <span className="text-[7.5px] bg-purple-950 border border-purple-500/40 text-purple-300 px-1.5 py-0.5 rounded uppercase font-bold leading-none">
+                    C-Band SAR
+                  </span>
+                </div>
+                
+                <div className="space-y-1.5 text-slate-300">
+                  <div className="flex justify-between">
+                    <span>FREQUENCY:</span>
+                    <span className="text-white font-bold">5.405 GHz</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>POLARIZATION:</span>
+                    <span className="text-white font-bold">Dual-Pol VV+VH</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>IMAGING MODE:</span>
+                    <span className="text-white font-bold">IW swath (250km)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>INCIDENCE ANGLE:</span>
+                    <span className="text-white font-bold">38.6°</span>
+                  </div>
+                  <div className="flex justify-between border-t border-purple-950/30 pt-1.5 mt-1.5">
+                    <span>SAR ATMOSPHERE:</span>
+                    <span className="text-green-400 font-bold">100% OPERATIONAL</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>STORM PENETRATION:</span>
+                    <span className="text-green-400 font-bold">Hurricane Opaque</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>ANOMALY DETECTOR:</span>
+                    <span className="text-cyan-400 font-bold">Metal Wings / Slicks</span>
+                  </div>
+                </div>
+                
+                <div className="text-[7.5px] text-slate-500 font-sans leading-relaxed border-t border-purple-950/20 pt-1.5">
+                  Microwaves bypass clouds and storm deck opacity to map ocean surface roughness anomalies.
+                </div>
+              </div>
+            )}
 
             <div className="space-y-3">
               <div className="flex justify-between items-center bg-slate-950/30 p-2.5 rounded border border-red-950/30">
@@ -2152,10 +2591,32 @@ export default function LiveMap() {
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-5 font-mono text-xs items-stretch text-left">
                     {/* LEFT COLUMN: SVG Graph (Left: sound speed profile, Right: ray tracer chart) */}
                     <div className="md:col-span-8 bg-[#090101]/50 p-4 rounded-lg border border-red-950/40 flex flex-col justify-between">
-                      <span className="block text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-2">
-                        🔊 2D UNDERSEA ACOUSTIC RAY-TRACING & REFRACTION WAVEFRONT MODEL (MACKENZIE RESOLUTION)
-                      </span>
-                      <div className="w-full bg-[#050101]/60 rounded border border-red-950/20 p-2 overflow-hidden flex items-center justify-center">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="block text-[10px] text-cyan-400 font-bold uppercase tracking-wider">
+                          🔊 {is3DSlicer ? "3D VOLUMETRIC OCEAN COLUMN SLICER & RAY MATRIX" : "2D UNDERSEA ACOUSTIC RAY-TRACING & REFRACTION WAVEFRONT MODEL"}
+                        </span>
+                        <button
+                          onClick={() => setIs3DSlicer(!is3DSlicer)}
+                          className={`px-2.5 py-0.5 rounded text-[8px] font-mono tracking-wider border cursor-pointer transition-all duration-300 ${
+                            is3DSlicer
+                              ? "bg-cyan-950/40 border-cyan-500/80 text-cyan-400 font-bold shadow-[0_0_10px_rgba(6,182,212,0.3)]"
+                              : "bg-slate-950/40 border-slate-700/60 text-slate-400 hover:text-slate-300 hover:border-slate-500"
+                          }`}
+                        >
+                          {is3DSlicer ? "🧊 SLICER 2D" : "📐 SLICER 3D"}
+                        </button>
+                      </div>
+                      <div 
+                        className={`w-full bg-[#050101]/60 rounded border p-2 overflow-hidden flex items-center justify-center transition-all duration-700 ${
+                          is3DSlicer 
+                            ? "border-cyan-500/40 shadow-[0_20px_35px_rgba(0,0,0,0.8),_0_0_30px_rgba(6,182,212,0.15)] animate-flicker" 
+                            : "border-red-950/20"
+                        }`}
+                        style={is3DSlicer ? {
+                          transform: "perspective(1000px) rotateX(25deg) rotateY(-18deg) rotateZ(2deg)",
+                          transformStyle: "preserve-3d",
+                        } : undefined}
+                      >
                         {(() => {
                           const { ssp, rays } = acousticData;
                           
@@ -2180,6 +2641,30 @@ export default function LiveMap() {
                               {/* Background Grids */}
                               <rect x="30" y="20" width="160" height="180" fill="#000000" fillOpacity="0.4" stroke="#450a0a" strokeOpacity="0.3" />
                               <rect x="230" y="20" width="510" height="180" fill="#000000" fillOpacity="0.4" stroke="#450a0a" strokeOpacity="0.3" />
+                              
+                              {/* 3D Volumetric guide grids when 3D slicer is active */}
+                              {is3DSlicer && (
+                                <>
+                                  {/* Holographic depth projection guidelines */}
+                                  <line x1="230" y1="20" x2="230" y2="200" stroke="#06b6d4" strokeOpacity="0.25" strokeWidth="0.5" />
+                                  <line x1="740" y1="20" x2="740" y2="200" stroke="#06b6d4" strokeOpacity="0.25" strokeWidth="0.5" />
+                                  <line x1="400" y1="20" x2="400" y2="200" stroke="#06b6d4" strokeOpacity="0.1" strokeDasharray="3,3" strokeWidth="0.5" />
+                                  <line x1="570" y1="20" x2="570" y2="200" stroke="#06b6d4" strokeOpacity="0.1" strokeDasharray="3,3" strokeWidth="0.5" />
+
+                                  {/* Thermocline volumetric plane overlay */}
+                                  <rect x="230" y="20" width="510" height="40" fill="#3b82f6" fillOpacity="0.04" />
+                                  <line x1="230" y1="60" x2="740" y2="60" stroke="#3b82f6" strokeOpacity="0.2" strokeDasharray="4,4" strokeWidth="0.5" />
+                                  <text x="735" y="55" fill="#3b82f6" fontSize="6" opacity="0.4" textAnchor="end">THERMOCLINE SHIELD LAYER</text>
+
+                                  {/* Vertical Volume grids projecting depth sections */}
+                                  {Array.from({ length: 6 }).map((_, idx) => {
+                                    const rx = 230 + (idx * 510) / 5;
+                                    return (
+                                      <line key={idx} x1={rx} y1="20" x2={rx} y2="200" stroke="#06b6d4" strokeOpacity="0.05" strokeWidth="0.3" />
+                                    );
+                                  })}
+                                </>
+                              )}
                               
                               {/* Depth grid tick coordinates */}
                               {(() => {
@@ -2249,18 +2734,38 @@ export default function LiveMap() {
                               })()}
                               <text x="110" y="12" fill="#3b82f6" fontSize="8" textAnchor="middle" fontWeight="bold">SOUND SPEED PROFILE</text>
                               
-                              {/* Refracted Acoustic Rays */}
+                              {/* Refracted Acoustic Rays with Transmission Loss Heatmap */}
                               {rays.map((ray, rIdx) => {
-                                const rayPathStr = ray.path.map(pt => `${rayX(pt[0])},${rayY(pt[1])}`).join(" L ");
                                 return (
-                                  <path 
-                                    key={rIdx} 
-                                    d={`M ${rayPathStr}`} 
-                                    fill="none" 
-                                    stroke={ray.collides ? "#ef4444" : Math.abs(ray.angle) <= 30 ? "#22c55e" : "#06b6d4"} 
-                                    strokeWidth="0.8" 
-                                    strokeOpacity={ray.collides ? "0.4" : Math.abs(ray.angle) <= 30 ? "0.85" : "0.6"} 
-                                  />
+                                  <g key={rIdx}>
+                                    {ray.path.slice(1).map((pt, ptIdx) => {
+                                      const prevPt = ray.path[ptIdx];
+                                      const tl = pt.tl;
+                                      
+                                      // Color code segments by Transmission Loss (TL)
+                                      let color = "#22d3ee"; // Cyan (<50dB - strong signal)
+                                      if (tl >= 100) {
+                                        color = "#334155"; // Slate (absorbed/lost)
+                                      } else if (tl >= 75) {
+                                        color = "#1e3a8a"; // Deep Navy (very weak)
+                                      } else if (tl >= 50) {
+                                        color = "#3b82f6"; // Royal Blue (moderate)
+                                      }
+                                      
+                                      return (
+                                        <line
+                                          key={`${rIdx}-${ptIdx}`}
+                                          x1={rayX(prevPt.x)}
+                                          y1={rayY(prevPt.z)}
+                                          x2={rayX(pt.x)}
+                                          y2={rayY(pt.z)}
+                                          stroke={ray.collides && ptIdx === ray.path.length - 2 ? "#1e3a8a" : color}
+                                          strokeWidth={ray.collides ? "0.6" : Math.abs(ray.angle) <= 30 ? "1.2" : "0.8"}
+                                          strokeOpacity={ray.collides ? "0.3" : Math.abs(ray.angle) <= 30 ? "0.9" : "0.7"}
+                                        />
+                                      );
+                                    })}
+                                  </g>
                                 );
                               })}
                               
@@ -2307,13 +2812,24 @@ export default function LiveMap() {
                         })()}
                       </div>
                     </div>
-
                     {/* RIGHT COLUMN: Interactive deployment sliders & advisories */}
-                    <div className="md:col-span-4 bg-slate-950/40 p-4 rounded-lg border border-red-950/40 flex flex-col justify-between gap-4 text-left select-text">
+                    <div className="md:col-span-4 bg-slate-950/40 p-4 rounded-lg border border-blue-950/40 flex flex-col justify-between gap-4 text-left select-text">
                       <div className="space-y-3">
-                        <span className="block text-[10px] text-cyan-400 font-bold uppercase tracking-wider border-b border-cyan-950/40 pb-1.5">
-                          🔊 ACOUSTIC HYDRODYNAMIC SUMMARY
-                        </span>
+                        <div className="flex justify-between items-center border-b border-cyan-950/40 pb-1.5">
+                          <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">
+                            🔊 ACOUSTIC HYDRODYNAMIC SUMMARY
+                          </span>
+                          <button
+                            onClick={() => setEnginesMuted(!enginesMuted)}
+                            className={`px-2 py-0.5 rounded text-[8px] font-mono tracking-wider border cursor-pointer transition-all duration-300 ${
+                              enginesMuted 
+                                ? "bg-green-950/40 border-green-500/60 text-green-400 font-bold"
+                                : "bg-red-950/40 border-red-500/40 text-red-400 hover:text-red-300"
+                            }`}
+                          >
+                            {enginesMuted ? "🔇 ENGINES MUTED" : "🔊 ENGINES ACTIVE"}
+                          </button>
+                        </div>
                         
                         <div className="space-y-2 text-[10px] text-slate-300 font-mono">
                           <div className="flex justify-between border-b border-cyan-950/20 pb-1">
@@ -2321,17 +2837,23 @@ export default function LiveMap() {
                             <span className="text-cyan-400 font-bold">37.5 kHz (Pulsed)</span>
                           </div>
                           <div className="flex justify-between border-b border-cyan-950/20 pb-1">
-                            <span>WATER COLUMN SALINITY:</span>
-                            <span className="text-white font-bold">{acousticData.salinity} PSU</span>
+                            <span>RECEIVER SNR:</span>
+                            <span className={`font-bold ${acousticData.targetSNR > 10.0 ? "text-green-400 text-amber-glow" : acousticData.targetSNR >= 0.0 ? "text-yellow-400" : "text-slate-500"}`}>
+                              {acousticData.targetSNR <= -90 ? "UNDER DETECTION LIMIT" : `${acousticData.targetSNR.toFixed(1)} dB`}
+                            </span>
                           </div>
                           <div className="flex justify-between border-b border-cyan-950/20 pb-1">
-                            <span>TERRAIN OBSTRUCTION INDEX:</span>
-                            <span className={`font-bold ${acousticData.obstructionIndex > 30 ? "text-red-400 animate-pulse" : "text-yellow-400"}`}>
+                            <span>TRANSMISSION LOSS (TL):</span>
+                            <span className="text-white font-bold">{acousticData.targetTL.toFixed(1)} dB</span>
+                          </div>
+                          <div className="flex justify-between border-b border-cyan-950/20 pb-1">
+                            <span>TERRAIN OBSTRUCTION:</span>
+                            <span className={`font-bold ${acousticData.obstructionIndex > 30 ? "text-slate-500 animate-pulse" : "text-cyan-400"}`}>
                               {acousticData.obstructionIndex}% BLOCKED
                             </span>
                           </div>
                           <div className="flex justify-between">
-                            <span>MAX BATHY DEPTH:</span>
+                            <span>BATHYMETRY DEPTH:</span>
                             <span className="text-white font-bold">{acousticData.maxDepth}m</span>
                           </div>
                         </div>
@@ -2362,27 +2884,37 @@ export default function LiveMap() {
                         
                         {/* Live Hydrophone Refraction Alerts Indicator */}
                         {(() => {
-                          let statusColor = "text-red-400 border-red-950 bg-red-950/10";
+                          let statusColor = "text-slate-500 border-slate-950 bg-slate-950/10";
                           let statusLabel = "SURFACE BLIND ZONE";
                           let statusDesc = "Warm surface layer bends sound waves sharply downward. Towed locator is 100% blind to bottom pings here.";
                           
-                          if (acousticData.maxDepth <= 100) {
-                            statusColor = "text-green-400 border-green-950 bg-green-950/10";
-                            statusLabel = "SHALLOW DIRECT RANGE MATCH";
-                            statusDesc = "Shallow coastal corridor. Direct acoustic line-of-sight confirmed. Minimal refraction distortion.";
+                          if (acousticData.targetSNR <= -90) {
+                            statusColor = "text-slate-500 border-slate-950 bg-slate-950/10";
+                            statusLabel = "ACOUSTIC SHADOW ZONE / BLOCKED";
+                            statusDesc = "Sensor is trapped in an acoustic shadow zone behind the seamount barrier or deep boundary. Pings cannot reach this coordinates.";
+                          } else if (acousticData.targetSNR < 0.0) {
+                            statusColor = "text-red-400 border-red-950 bg-red-950/10";
+                            statusLabel = "SIGNAL DROWNED IN VESSEL NOISE";
+                            statusDesc = "Acoustic path is clear, but pings are drowned out by loud ship engines (Ambient Noise: 75 dB). Shut down engines to mute local noise.";
                           } else {
-                            if (hydrophoneDepth >= 700 && hydrophoneDepth <= 950) {
-                              statusColor = "text-green-400 border-green-950 bg-green-950/10 animate-pulse";
-                              statusLabel = "SOFAR CHANNEL TRAPPING - OPTIMAL";
-                              statusDesc = "Sensor centered on the sound speed minimum channel. Pings are trapped inside this wave duct, extending capture > 15 km.";
-                            } else if (hydrophoneDepth > 1400) {
-                              statusColor = "text-cyan-400 border-cyan-950 bg-cyan-950/10";
-                              statusLabel = "DEEP DIRECT PATH SCAN";
-                              statusDesc = "Sensor lowered below the deep thermocline boundary. High direct path interception, avoiding seamount obstruction.";
-                            } else if (hydrophoneDepth > 100) {
-                              statusColor = "text-yellow-400 border-yellow-950 bg-yellow-950/10";
-                              statusLabel = "TRANSITIONAL LAYER SEARCH";
-                              statusDesc = "Deep refraction thermocline. Sound waves exhibit moderate downward bending. Reduced horizontal sweep bounds.";
+                            if (acousticData.maxDepth <= 100) {
+                              statusColor = "text-green-400 border-green-950 bg-green-950/10";
+                              statusLabel = "SHALLOW DIRECT RANGE MATCH";
+                              statusDesc = `Direct coastal line-of-sight secured (SNR: ${acousticData.targetSNR.toFixed(1)} dB). Minimal refraction distortion.`;
+                            } else {
+                              if (hydrophoneDepth >= 700 && hydrophoneDepth <= 950) {
+                                statusColor = "text-green-400 border-green-950 bg-green-950/10 animate-pulse";
+                                statusLabel = "SOFAR CHANNEL TRAPPING - EXCELLENT";
+                                statusDesc = `Sensor trapped inside the SOFAR channel minimum (SNR: ${acousticData.targetSNR.toFixed(1)} dB). Pings are waves-guided horizontally.`;
+                              } else if (hydrophoneDepth > 1400) {
+                                statusColor = "text-cyan-400 border-cyan-950 bg-cyan-950/10";
+                                statusLabel = "DEEP DIRECT PATH MATCH";
+                                statusDesc = `Lowered below thermocline (SNR: ${acousticData.targetSNR.toFixed(1)} dB). Solid deep-sea direct path sweep secured.`;
+                              } else {
+                                statusColor = "text-yellow-400 border-yellow-950 bg-yellow-950/10";
+                                statusLabel = "TRANSITIONAL LAYER SEARCH";
+                                statusDesc = `Moderate downward ray bending (SNR: ${acousticData.targetSNR.toFixed(1)} dB). Reduced search radius.`;
+                              }
                             }
                           }
                           

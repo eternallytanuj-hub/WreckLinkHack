@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { NavHeader } from "../../components/NavHeader";
 import dynamic from "next/dynamic";
 
 // Dynamically load the Leaflet map component with SSR disabled
@@ -181,58 +182,30 @@ export default function WebAlertsPage() {
   }, [audioEnabled]);
 
   return (
-    <div className="min-h-screen bg-[#030712] text-[#F8FAFC] flex flex-col antialiased selection:bg-red-500/20 selection:text-red-300 font-sans">
+    <div className="min-h-screen bg-[#030712] text-[#F8FAFC] flex flex-col antialiased selection:bg-blue-500/20 selection:text-blue-300 font-sans">
       
-      {/* Glassmorphic Navbar */}
-      <header className="relative w-full z-50 border-b border-red-950/40 bg-[#050101]/55 backdrop-blur-md select-none">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-3 group">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-red-600 to-orange-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <Radio className="w-5 h-5 text-white animate-pulse" />
-            </div>
-            <span className="text-xl font-bold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-slate-100 to-slate-300 group-hover:from-red-400 group-hover:to-orange-300 transition-colors duration-300">
-              WRECK LINK
-            </span>
-          </Link>
+      {/* Premium Framer-Motion Animated Navigation Bar */}
+      <NavHeader>
+        {/* Audio Toggle control */}
+        <button 
+          onClick={() => setAudioEnabled(!audioEnabled)}
+          className={`p-2 rounded border transition-colors duration-300 ${
+            audioEnabled 
+              ? "bg-cyan-950/40 border-cyan-500/40 text-cyan-400 hover:bg-cyan-900/30" 
+              : "bg-slate-900/40 border-slate-800 text-slate-500 hover:text-slate-300"
+          }`}
+          title={audioEnabled ? "Disable Warning Audio Synth" : "Enable Warning Audio Synth"}
+        >
+          <Volume2 className={`w-4 h-4 ${audioEnabled ? "animate-pulse" : ""}`} />
+        </button>
 
-          <nav className="hidden md:flex items-center gap-8 text-sm">
-            <Link href="/" className="text-slate-300 font-semibold hover:text-red-400 tracking-wide transition-colors duration-300">
-              DASHBOARD
-            </Link>
-            <Link href="/live-map" className="text-slate-300 font-semibold hover:text-red-400 tracking-wide transition-colors duration-300">
-              LIVE_MAP
-            </Link>
-            <Link href="/public-alarms" className="text-slate-300 font-semibold hover:text-red-400 tracking-wide transition-colors duration-300">
-              PUBLIC_ALARMS
-            </Link>
-            <span className="text-red-400 font-semibold tracking-wide border-b border-red-500/30 pb-1">
-              WEB_ALERTS
-            </span>
-          </nav>
-
-          <div className="flex items-center gap-3">
-            {/* Audio Toggle control */}
-            <button 
-              onClick={() => setAudioEnabled(!audioEnabled)}
-              className={`p-2 rounded border transition-colors duration-300 ${
-                audioEnabled 
-                  ? "bg-red-950/40 border-red-500/40 text-red-400 hover:bg-red-900/30" 
-                  : "bg-slate-900/40 border-slate-800 text-slate-500 hover:text-slate-300"
-              }`}
-              title={audioEnabled ? "Disable Warning Audio Synth" : "Enable Warning Audio Synth"}
-            >
-              <Volume2 className={`w-4 h-4 ${audioEnabled ? "animate-pulse" : ""}`} />
-            </button>
-
-            <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-mono tracking-wider bg-red-950/40 border border-red-900/50 ${
-              connected ? "text-red-400" : "text-yellow-500"
-            }`}>
-              <span className={`w-2 h-2 rounded-full ${connected ? "bg-red-400 animate-ping" : "bg-yellow-500 animate-pulse"}`} />
-              {connected ? "SOCKET_ONLINE" : "SOCKET_CONNECTING"}
-            </span>
-          </div>
-        </div>
-      </header>
+        <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-mono tracking-wider bg-blue-950/40 border border-blue-900/50 ${
+          connected ? "text-cyan-400" : "text-yellow-500"
+        }`}>
+          <span className={`w-2 h-2 rounded-full ${connected ? "bg-cyan-400 animate-ping" : "bg-yellow-500 animate-pulse"}`} />
+          {connected ? "SOCKET_ONLINE" : "SOCKET_CONNECTING"}
+        </span>
+      </NavHeader>
 
       {/* Main Realtime Layout */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start relative z-10">
@@ -256,7 +229,7 @@ export default function WebAlertsPage() {
                 activeFlights={selectedAlert.telemetry?.active_flights}
               />
             ) : (
-              <div className="w-full h-full bg-slate-950/40 flex flex-col items-center justify-center gap-3 border border-red-950/60 rounded-xl min-h-[300px]">
+              <div className="w-full h-full bg-slate-950/40 flex flex-col items-center justify-center gap-3 border border-blue-950/60 rounded-xl min-h-[300px]">
                 <Activity className="w-8 h-8 text-slate-600 animate-pulse" />
                 <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Select an alert to link mapping</span>
               </div>
@@ -264,17 +237,7 @@ export default function WebAlertsPage() {
           </div>
 
           {/* Radar circle sweeper + Test Button */}
-          <div className="rounded-xl border border-red-950/60 bg-[#120202]/25 p-5 flex flex-col gap-4 relative overflow-hidden shadow-lg select-none">
-            <div className="flex items-center justify-between border-b border-red-950/40 pb-2.5">
-              <span className="text-xs font-mono font-bold text-slate-300 uppercase tracking-wide">EOC CONSOLE SYSTEMS</span>
-              <button 
-                onClick={testVoiceSynthesizer}
-                className="px-2.5 py-1 rounded bg-red-950/50 hover:bg-red-950 border border-red-900/60 hover:border-red-600 text-[10px] text-red-400 font-mono transition-colors duration-300 flex items-center gap-1.5"
-              >
-                <Volume2 className="w-3 h-3" />
-                TEST SPEAKERS
-              </button>
-            </div>
+          <div className="rounded-xl border border-blue-950/60 bg-[#020617]/25 p-5 flex flex-col gap-4 relative overflow-hidden shadow-lg select-none">
             
             <div className="flex items-center gap-5 justify-center">
               <div className="relative w-28 h-28 rounded-full border border-red-950/80 flex items-center justify-center bg-[#050101]/80 shrink-0">
@@ -310,7 +273,7 @@ export default function WebAlertsPage() {
             /* Loading skeletons */
             <div className="space-y-4">
               {[1, 2].map((i) => (
-                <div key={i} className="h-44 w-full rounded-xl border border-red-950/60 bg-[#120202]/25 p-5 animate-pulse flex gap-5">
+                <div key={i} className="h-44 w-full rounded-xl border border-blue-950/60 bg-[#020617]/25 p-5 animate-pulse flex gap-5">
                   <div className="w-32 bg-slate-950/50 rounded-lg border border-red-950/30" />
                   <div className="flex-1 space-y-3">
                     <div className="h-4 bg-slate-950/50 rounded w-3/4" />
@@ -330,7 +293,7 @@ export default function WebAlertsPage() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="border border-red-950/60 bg-[#120202]/10 rounded-xl p-12 text-center flex flex-col items-center gap-3 select-none"
+                    className="border border-blue-950/60 bg-[#020617]/10 rounded-xl p-12 text-center flex flex-col items-center gap-3 select-none"
                   >
                     <Activity className="w-8 h-8 text-slate-500 animate-pulse" />
                     <div className="space-y-2">
@@ -358,20 +321,20 @@ export default function WebAlertsPage() {
                         exit={{ opacity: 0, scale: 0.95 }}
                         transition={{ duration: 0.5 }}
                         onClick={() => setSelectedAlert(alert)}
-                        className={`rounded-xl p-5 flex flex-col md:flex-row gap-5 transition-all duration-300 shadow-xl shadow-slate-950/30 relative overflow-hidden cursor-pointer border-l-4 ${
+                         className={`rounded-xl p-5 flex flex-col md:flex-row gap-5 transition-all duration-300 shadow-xl shadow-slate-950/30 relative overflow-hidden cursor-pointer border-l-4 ${
                           selectedAlert?.id === alert.id 
-                            ? "border-l-red-500 bg-[#1a0505]/45 border-y border-r border-red-800/50 shadow-red-950/20" 
-                            : "border-l-transparent bg-[#120202]/25 hover:bg-[#1a0505]/30 hover:border-red-900/30 border border-red-950/50"
+                            ? "border-l-cyan-500 bg-[#020617]/45 border-y border-r border-blue-800/50 shadow-blue-950/20" 
+                            : "border-l-transparent bg-[#020617]/25 hover:bg-[#020617]/30 hover:border-blue-900/30 border border-blue-950/50"
                         }`}
                       >
                         {/* Top status line */}
-                        <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r via-red-500/20 to-transparent ${
-                          selectedAlert?.id === alert.id ? "from-red-500" : "from-red-950/50"
+                        <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r via-cyan-500/20 to-transparent ${
+                          selectedAlert?.id === alert.id ? "from-cyan-500" : "from-blue-950/50"
                         }`} />
 
                         {/* Left: Downloaded Image Evidence */}
                         {alert.image_url && (
-                          <div className="w-full md:w-40 h-32 relative rounded-lg border border-red-950/60 bg-slate-950/60 overflow-hidden shrink-0 group select-none">
+                          <div className="w-full md:w-40 h-32 relative rounded-lg border border-blue-950/60 bg-slate-950/60 overflow-hidden shrink-0 group select-none">
                             <img 
                               src={alert.image_url} 
                               alt={alert.title}
@@ -470,7 +433,7 @@ export default function WebAlertsPage() {
                               {alert.telemetry?.active_flights && alert.telemetry.active_flights.length > 0 ? (
                                 <div className="space-y-1">
                                   {alert.telemetry.active_flights.slice(0, 1).map((f) => (
-                                    <div key={f.icao24} className="flex justify-between items-center bg-[#030712] border border-red-950/60 p-2 rounded font-mono text-[10px]">
+                                    <div key={f.icao24} className="flex justify-between items-center bg-[#030712] border border-blue-950/60 p-2 rounded font-mono text-[10px]">
                                       <span className="text-white font-bold flex items-center gap-1">
                                         <Navigation className="w-2.5 h-2.5 text-red-400 rotate-90" />
                                         {f.callsign || "N/A"}

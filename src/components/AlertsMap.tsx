@@ -36,8 +36,8 @@ const getAlertIcon = () => {
   return L.divIcon({
     className: "alert-target-icon",
     html: `<div class="relative flex items-center justify-center">
-             <div class="absolute w-8 h-8 rounded-full bg-red-500/40 animate-ping"></div>
-             <div class="w-4.5 h-4.5 rounded-full bg-red-600 border-2 border-slate-100 shadow-[0_0_15px_#ef4444]"></div>
+             <div class="absolute w-8 h-8 rounded-full bg-cyan-500/40 animate-ping"></div>
+             <div class="w-4.5 h-4.5 rounded-full bg-cyan-600 border-2 border-slate-100 shadow-[0_0_15px_#06b6d4]"></div>
            </div>`,
     iconSize: [32, 32],
     iconAnchor: [16, 16]
@@ -48,8 +48,8 @@ const getAlertIcon = () => {
 const getFlightIcon = (heading: number) => {
   return L.divIcon({
     className: "flight-marker-icon-alert",
-    html: `<div style="transform: rotate(${heading}deg)" class="flex items-center justify-center text-red-400 drop-shadow-[0_0_8px_rgba(239,68,68,0.7)]">
-             <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" stroke="#7f1d1d" stroke-width="1.5">
+    html: `<div style="transform: rotate(${heading}deg)" class="flex items-center justify-center text-cyan-400 drop-shadow-[0_0_8px_rgba(6,182,212,0.7)]">
+             <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" stroke="#0e7490" stroke-width="1.5">
                <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3-1 3 1v-1.5L14 19v-5.5l8 2.5z"/>
              </svg>
            </div>`,
@@ -66,7 +66,7 @@ export default function AlertsMap({ latitude, longitude, locationName, activeFli
   ];
 
   return (
-    <div className="w-full h-full relative rounded-xl overflow-hidden border border-red-950/60 shadow-inner">
+    <div className="w-full h-full relative rounded-xl overflow-hidden border border-blue-950/60 shadow-inner">
       <MapContainer
         center={mapCenter}
         zoom={4}
@@ -85,8 +85,8 @@ export default function AlertsMap({ latitude, longitude, locationName, activeFli
         {isValidNum(latitude) && isValidNum(longitude) && latitude !== 0 && longitude !== 0 && (
           <Marker position={[latitude, longitude]} icon={getAlertIcon()}>
             <Popup>
-              <div className="p-2 text-xs font-mono bg-slate-950/90 text-red-200 border border-red-950/40 rounded">
-                <span className="font-bold text-red-500 uppercase block border-b border-red-950 pb-1 mb-1">REPORTED IMPACT SITE</span>
+              <div className="p-2 text-xs font-mono bg-slate-950/90 text-cyan-200 border border-blue-950/40 rounded">
+                <span className="font-bold text-cyan-400 uppercase block border-b border-blue-950 pb-1 mb-1">REPORTED IMPACT SITE</span>
                 <span className="block">LOC: {locationName}</span>
                 <span className="block">LAT/LON: {latitude.toFixed(4)}, {longitude.toFixed(4)}</span>
               </div>
@@ -107,8 +107,8 @@ export default function AlertsMap({ latitude, longitude, locationName, activeFli
               icon={getFlightIcon(f.heading || 0)}
             >
               <Popup>
-                <div className="p-2 text-xs font-mono bg-slate-950/90 text-red-200 border border-red-950/40 rounded">
-                  <span className="font-bold text-red-400 uppercase block border-b border-red-950 pb-1 mb-1">CORRELATED FLIGHT</span>
+                <div className="p-2 text-xs font-mono bg-slate-950/90 text-cyan-200 border border-blue-950/40 rounded">
+                  <span className="font-bold text-cyan-400 uppercase block border-b border-blue-950 pb-1 mb-1">CORRELATED FLIGHT</span>
                   <span className="block">CALLSIGN: {f.callsign || "N/A"}</span>
                   <span className="block">ALTITUDE: {f.altitude}m</span>
                   <span className="block">VELOCITY: {f.velocity}km/h</span>
@@ -121,8 +121,8 @@ export default function AlertsMap({ latitude, longitude, locationName, activeFli
       </MapContainer>
 
       {/* Floating Coordinate HUD overlay */}
-      <div className="absolute bottom-3 left-3 z-20 bg-slate-950/80 border border-red-950/60 p-2.5 rounded text-[10px] font-mono text-red-400 select-none shadow-md backdrop-blur-sm">
-        <span className="block text-red-500 font-bold uppercase mb-0.5">TACTICAL RADAR BOX</span>
+      <div className="absolute bottom-3 left-3 z-20 bg-slate-950/80 border border-blue-950/60 p-2.5 rounded text-[10px] font-mono text-cyan-400 select-none shadow-md backdrop-blur-sm">
+        <span className="block text-cyan-400 font-bold uppercase mb-0.5">TACTICAL RADAR BOX</span>
         <span>LAT: {latitude.toFixed(4)} | LON: {longitude.toFixed(4)}</span>
       </div>
     </div>

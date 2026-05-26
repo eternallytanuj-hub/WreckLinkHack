@@ -142,7 +142,10 @@ Do not include any pre-text or post-text. Return only the JSON object.
 `;
 
     // 3. Query the Groq API using native fetch with robust model fallbacks
-    const models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"];
+    const models = [
+      "llama-3.3-70b-versatile",
+      "llama-3.1-8b-instant"
+    ];
     let groqRes: Response | null = null;
     let lastError: Error | null = null;
 

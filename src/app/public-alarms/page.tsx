@@ -12,10 +12,14 @@ import {
   FileImage, 
   Compass, 
   Navigation,
-  ExternalLink 
+  ExternalLink,
+  CloudOff,
+  Zap,
+  Droplets
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { NavHeader } from "../../components/NavHeader";
 import { getAirlineName } from "../../lib/airlineNames";
 
 interface Flight {
@@ -52,7 +56,34 @@ export default function PublicAlarmsPage() {
   const [verifying, setVerifying] = useState(false);
   const [currentStage, setCurrentStage] = useState(0);
   const [verificationResult, setVerificationResult] = useState<any | null>(null);
-  const [satelliteBand, setSatelliteBand] = useState<"optical" | "thermal" | "spectral">("optical");
+  const [satelliteBand, setSatelliteBand] = useState<"optical" | "thermal" | "spectral" | "radar">("optical");
+  const [tleData, setTleData] = useState<any | null>(null);
+  const [tleLoading, setTleLoading] = useState(false);
+
+  // Fetch real-time TLE data when satelliteBand changes or verification completes
+  useEffect(() => {
+    if (!verificationResult) return;
+    
+    const fetchTle = async () => {
+      setTleLoading(true);
+      try {
+        const norad = satelliteBand === "radar" ? "39634" : "40697"; // Sentinel-1A vs Sentinel-2A
+        const res = await fetch(`/api/tle?norad=${norad}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success) {
+            setTleData(data);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch satellite TLE tracking parameters:", err);
+      } finally {
+        setTleLoading(false);
+      }
+    };
+    
+    fetchTle();
+  }, [satelliteBand, verificationResult]);
 
   // Fetch live flights on mount to populate quick-telemetry dropdown
   useEffect(() => {
@@ -181,43 +212,10 @@ export default function PublicAlarmsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#030712] text-[#F8FAFC] flex flex-col antialiased selection:bg-red-500/20 selection:text-red-300 font-sans">
+    <div className="min-h-screen bg-[#030712] text-[#F8FAFC] flex flex-col antialiased selection:bg-blue-500/20 selection:text-blue-300 font-sans">
       
-      {/* Glassmorphic Navbar */}
-      <header className="relative w-full z-50 border-b border-red-950/40 bg-[#050101]/55 backdrop-blur-md select-none">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-3 group">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-red-600 to-orange-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <Radio className="w-5 h-5 text-white animate-pulse" />
-            </div>
-            <span className="text-xl font-bold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-slate-100 to-slate-300 group-hover:from-red-400 group-hover:to-orange-300 transition-colors duration-300">
-              WRECK LINK
-            </span>
-          </Link>
-
-          <nav className="hidden md:flex items-center gap-8 text-sm">
-            <Link href="/" className="text-slate-300 font-semibold hover:text-red-400 tracking-wide transition-colors duration-300">
-              DASHBOARD
-            </Link>
-            <Link href="/live-map" className="text-slate-300 font-semibold hover:text-red-400 tracking-wide transition-colors duration-300">
-              LIVE_MAP
-            </Link>
-            <span className="text-red-400 font-semibold tracking-wide border-b border-red-500/30 pb-1">
-              PUBLIC_ALARMS
-            </span>
-            <Link href="/web-alerts" className="text-slate-300 font-semibold hover:text-red-400 tracking-wide transition-colors duration-300">
-              WEB_ALERTS
-            </Link>
-          </nav>
-
-          <div className="flex items-center gap-4">
-            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-mono tracking-wider bg-red-950/40 border border-red-900/50 text-red-400">
-              <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
-              API_ONLINE
-            </span>
-          </div>
-        </div>
-      </header>
+      {/* Premium Framer-Motion Animated Navigation Bar */}
+      <NavHeader />
 
       {/* Main Page Layout */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-10 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start relative z-10">
@@ -232,7 +230,7 @@ export default function PublicAlarmsPage() {
             </p>
           </div>
 
-          <div className="rounded-xl border border-red-950/60 bg-[#120202]/25 p-5 space-y-5 shadow-xl">
+          <div className="rounded-xl border border-blue-950/60 bg-[#020617]/25 p-5 space-y-5 shadow-xl">
             
             {/* Quick Live Flight Telemetry Autofill helper */}
             <div className="space-y-2 select-none">
@@ -242,7 +240,7 @@ export default function PublicAlarmsPage() {
               <select
                 onChange={handleSelectFlight}
                 disabled={flightsLoading}
-                className="w-full bg-[#030712] border border-red-950/80 rounded-lg p-3 text-sm text-slate-200 font-mono focus:outline-none focus:border-red-500/50 cursor-pointer"
+                className="w-full bg-[#030712] border border-blue-950/80 rounded-lg p-3 text-sm text-slate-200 font-mono focus:outline-none focus:border-cyan-500/50 cursor-pointer"
               >
                 <option value="">-- SELECT LIVE TARGET TO CLONE TELEMETRY --</option>
                 {flights.map((f) => (
@@ -266,10 +264,10 @@ export default function PublicAlarmsPage() {
                 onClick={() => fileInputRef.current?.click()}
                 className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center gap-3.5 cursor-pointer transition-all duration-300 min-h-[170px] ${
                   isDragging 
-                    ? "border-red-500 bg-red-950/30 shadow-[0_0_15px_rgba(239,68,68,0.15)]" 
+                    ? "border-cyan-500 bg-cyan-950/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]" 
                     : file 
-                    ? "border-red-900/80 bg-[#120202]/45" 
-                    : "border-red-950/80 bg-slate-950/15 hover:border-red-800/60 hover:bg-[#120202]/10"
+                    ? "border-blue-900/80 bg-[#020617]/45" 
+                    : "border-blue-950/80 bg-slate-950/15 hover:border-cyan-800/60 hover:bg-[#020617]/10"
                 }`}
               >
                 <input
@@ -285,10 +283,10 @@ export default function PublicAlarmsPage() {
                     <img 
                       src={imagePreview} 
                       alt="Wreck Upload Preview" 
-                      className="max-h-28 rounded border border-red-950/65 shadow-md object-contain"
+                      className="max-h-28 rounded border border-blue-950/65 shadow-md object-contain"
                     />
                     <div className="flex items-center gap-2 text-xs font-mono text-slate-300">
-                      <FileImage className="w-4 h-4 text-red-400" />
+                      <FileImage className="w-4 h-4 text-cyan-400" />
                       <span className="truncate max-w-[200px] font-semibold">{file?.name}</span>
                       <button 
                         type="button"
@@ -296,7 +294,7 @@ export default function PublicAlarmsPage() {
                           e.stopPropagation();
                           setFile(null);
                         }}
-                        className="text-red-400 hover:text-red-300 p-0.5 ml-1 cursor-pointer"
+                        className="text-cyan-400 hover:text-cyan-300 p-0.5 ml-1 cursor-pointer"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -304,7 +302,7 @@ export default function PublicAlarmsPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="w-11 h-11 rounded-lg bg-red-950/30 border border-red-900/40 flex items-center justify-center text-red-400 group-hover:scale-105 transition-transform duration-300 shadow-md">
+                    <div className="w-11 h-11 rounded-lg bg-blue-950/30 border border-blue-900/40 flex items-center justify-center text-cyan-400 group-hover:scale-105 transition-transform duration-300 shadow-md">
                       <UploadCloud className="w-5.5 h-5.5" />
                     </div>
                     <div className="text-center space-y-1">
@@ -327,7 +325,7 @@ export default function PublicAlarmsPage() {
                   type="text"
                   value={callsign}
                   onChange={(e) => setCallsign(e.target.value)}
-                  className="w-full bg-[#030712] border border-blue-950/80 rounded-lg p-3 text-sm text-slate-100 font-mono focus:outline-none focus:border-red-500/50"
+                  className="w-full bg-[#030712] border border-blue-950/80 rounded-lg p-3 text-sm text-slate-100 font-mono focus:outline-none focus:border-cyan-500/50"
                 />
               </div>
 
@@ -339,7 +337,7 @@ export default function PublicAlarmsPage() {
                   type="number"
                   value={altitude}
                   onChange={(e) => setAltitude(e.target.value)}
-                  className="w-full bg-[#030712] border border-blue-950/80 rounded-lg p-3 text-sm text-slate-100 font-mono focus:outline-none focus:border-red-500/50"
+                  className="w-full bg-[#030712] border border-blue-950/80 rounded-lg p-3 text-sm text-slate-100 font-mono focus:outline-none focus:border-cyan-500/50"
                 />
               </div>
 
@@ -351,7 +349,7 @@ export default function PublicAlarmsPage() {
                   type="number"
                   value={velocity}
                   onChange={(e) => setVelocity(e.target.value)}
-                  className="w-full bg-[#030712] border border-blue-950/80 rounded-lg p-3 text-sm text-slate-100 font-mono focus:outline-none focus:border-red-500/50"
+                  className="w-full bg-[#030712] border border-blue-950/80 rounded-lg p-3 text-sm text-slate-100 font-mono focus:outline-none focus:border-cyan-500/50"
                 />
               </div>
 
@@ -363,14 +361,14 @@ export default function PublicAlarmsPage() {
                   type="number"
                   value={heading}
                   onChange={(e) => setHeading(e.target.value)}
-                  className="w-full bg-[#030712] border border-blue-950/80 rounded-lg p-3 text-sm text-slate-100 font-mono focus:outline-none focus:border-red-500/50"
+                  className="w-full bg-[#030712] border border-blue-950/80 rounded-lg p-3 text-sm text-slate-100 font-mono focus:outline-none focus:border-cyan-500/50"
                 />
               </div>
 
             </div>
 
             {/* Link Connection Status Switch */}
-            <div className="flex items-center justify-between p-3.5 rounded-lg bg-slate-950/30 border border-red-950/40">
+            <div className="flex items-center justify-between p-3.5 rounded-lg bg-slate-950/30 border border-blue-950/40">
               <div className="space-y-1 select-none">
                 <span className="block text-sm font-bold text-slate-200">Transponder Link Loss</span>
                 <span className="block text-xs text-slate-400 leading-normal">
@@ -381,7 +379,7 @@ export default function PublicAlarmsPage() {
                 type="checkbox"
                 checked={transponderLoss}
                 onChange={(e) => setTransponderLoss(e.target.checked)}
-                className="w-4.5 h-4.5 rounded border-blue-950/80 bg-[#030712] text-red-500 focus:ring-red-500 focus:ring-offset-0 focus:outline-none cursor-pointer"
+                className="w-4.5 h-4.5 rounded border-blue-950/80 bg-[#030712] text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0 focus:outline-none cursor-pointer"
               />
             </div>
 
@@ -391,10 +389,10 @@ export default function PublicAlarmsPage() {
               disabled={verifying || !file}
               className={`w-full py-4 rounded-lg font-mono text-xs tracking-wider border font-bold flex items-center justify-center gap-2 transition-all duration-300 cursor-pointer ${
                 !file
-                  ? "bg-slate-900/30 border-red-950/40 text-slate-500 cursor-not-allowed"
+                  ? "bg-slate-900/30 border-blue-950/40 text-slate-500 cursor-not-allowed"
                   : verifying
-                  ? "bg-red-950/40 border-red-800/80 text-red-300 cursor-wait animate-pulse"
-                  : "bg-red-700 border-red-600 text-white hover:bg-red-600 hover:shadow-lg hover:shadow-red-500/10"
+                  ? "bg-blue-950/40 border-blue-800/80 text-cyan-300 cursor-wait animate-pulse"
+                  : "bg-blue-700 border-blue-600 text-white hover:bg-blue-600 hover:shadow-lg hover:shadow-cyan-500/10"
               }`}
             >
               {verifying ? (
@@ -427,7 +425,8 @@ export default function PublicAlarmsPage() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -15 }}
                 transition={{ duration: 0.5 }}
-                className="w-full flex-1 flex flex-col items-center justify-center border border-red-950/60 bg-[#120202]/10 rounded-xl p-8 text-center space-y-4 min-h-[460px] select-none"
+                className="w-full flex-1 flex flex-col items-center justify-center border border-blue-950/60 bg-[#020617]/10 rounded-xl p-8 text-center space-y-4 min-h-[460px] select-none"
+                style={{ backdropFilter: 'blur(4px)' }}
               >
                 <div className="w-14 h-14 rounded-full border border-blue-950 flex items-center justify-center text-slate-400 bg-[#030712]/50 shadow-md">
                   <Cpu className="w-6 h-6 text-slate-400" />
@@ -449,7 +448,7 @@ export default function PublicAlarmsPage() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -15 }}
                 transition={{ duration: 0.4 }}
-                className="w-full flex-1 flex flex-col justify-between border border-red-950/60 bg-[#050101] rounded-xl p-6 min-h-[460px] font-mono text-xs text-red-400 space-y-4 select-none"
+                className="w-full flex-1 flex flex-col justify-between border border-blue-950/60 bg-[#020617] rounded-xl p-6 min-h-[460px] font-mono text-xs text-cyan-400 space-y-4 select-none"
               >
                 {/* Terminal Header */}
                 <div className="flex justify-between items-center border-b border-blue-950/60 pb-2.5">
@@ -511,7 +510,7 @@ export default function PublicAlarmsPage() {
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.4 }}
-                className="w-full flex-1 flex flex-col justify-between border border-red-950/60 bg-[#120202]/15 rounded-xl p-5 min-h-[460px] space-y-5"
+                className="w-full flex-1 flex flex-col justify-between border border-blue-950/60 bg-[#020617]/15 rounded-xl p-5 min-h-[460px] space-y-5"
               >
                 
                 {/* Image & URL info */}
@@ -556,7 +555,7 @@ export default function PublicAlarmsPage() {
                   {verificationResult.exif && verificationResult.telemetry_used && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {/* EXIF Metadata Verification */}
-                      <div className="bg-[#120202]/30 p-3.5 rounded-xl border border-red-950/50 space-y-2 text-xs font-mono select-none">
+                      <div className="bg-[#020617]/30 p-3.5 rounded-xl border border-blue-950/50 space-y-2 text-xs font-mono select-none">
                         <span className="block text-[9px] text-red-500 font-bold uppercase tracking-wider">
                           IMAGE EXIF METADATA
                         </span>
@@ -593,7 +592,7 @@ export default function PublicAlarmsPage() {
                       </div>
 
                       {/* Telemetry Lock Status */}
-                      <div className="bg-[#120202]/30 p-3.5 rounded-xl border border-red-950/50 space-y-2 text-xs font-mono select-none">
+                      <div className="bg-[#020617]/30 p-3.5 rounded-xl border border-blue-950/50 space-y-2 text-xs font-mono select-none">
                         <span className="block text-[9px] text-red-500 font-bold uppercase tracking-wider">
                           TELEMETRY DATABASE LOCK
                         </span>
@@ -623,9 +622,9 @@ export default function PublicAlarmsPage() {
 
                   {/* Satellite Imagery Verification Lens Card */}
                   {verificationResult.satellite_verification && (
-                    <div className="bg-[#120202]/30 p-4 rounded-xl border border-red-950/50 space-y-3.5 select-none font-mono">
-                      <div className="flex items-center justify-between border-b border-red-950/40 pb-2.5">
-                        <span className="text-[10px] text-red-500 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                    <div className="bg-[#020617]/30 p-4 rounded-xl border border-blue-950/50 space-y-3.5 select-none font-mono">
+                      <div className="flex items-center justify-between border-b border-blue-950/40 pb-2.5">
+                        <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                           🛰️ MULTISPECTRAL SATELLITE IMAGE VALIDATOR
                         </span>
                         <span className="text-[9px] text-slate-400">TRACK: SECURED (Sentinel L1C)</span>
@@ -638,7 +637,7 @@ export default function PublicAlarmsPage() {
                           className={`px-2.5 py-1 rounded border cursor-pointer transition-colors duration-300 ${
                             satelliteBand === "optical"
                               ? "bg-slate-900 border-slate-700 text-slate-200"
-                              : "border-red-950/30 text-slate-500 hover:text-slate-400"
+                              : "border-blue-950/30 text-slate-500 hover:text-slate-400"
                           }`}
                         >
                           OPTICAL (TRUE COLOR)
@@ -647,8 +646,8 @@ export default function PublicAlarmsPage() {
                           onClick={() => setSatelliteBand("thermal")}
                           className={`px-2.5 py-1 rounded border cursor-pointer transition-colors duration-300 ${
                             satelliteBand === "thermal"
-                              ? "bg-red-950/40 border-red-800/80 text-red-400 font-bold"
-                              : "border-red-950/30 text-slate-500 hover:text-slate-400"
+                              ? "bg-blue-950/40 border-blue-800/80 text-cyan-400 font-bold"
+                              : "border-blue-950/30 text-slate-500 hover:text-slate-400"
                           }`}
                         >
                           THERMAL IR (BAND 12)
@@ -658,15 +657,25 @@ export default function PublicAlarmsPage() {
                           className={`px-2.5 py-1 rounded border cursor-pointer transition-colors duration-300 ${
                             satelliteBand === "spectral"
                               ? "bg-emerald-950/40 border-emerald-800/80 text-emerald-400 font-bold"
-                              : "border-red-950/30 text-slate-500 hover:text-slate-400"
+                              : "border-blue-950/30 text-slate-500 hover:text-slate-400"
                           }`}
                         >
                           FALSE-COLOR VEG (BAND 8)
                         </button>
+                        <button
+                          onClick={() => setSatelliteBand("radar")}
+                          className={`px-2.5 py-1 rounded border cursor-pointer transition-colors duration-300 ${
+                            satelliteBand === "radar"
+                              ? "bg-cyan-950/40 border-cyan-800/80 text-cyan-400 font-bold"
+                              : "border-blue-950/30 text-slate-500 hover:text-slate-400"
+                          }`}
+                        >
+                          🛰️ SENTINEL-1 SAR (RADAR)
+                        </button>
                       </div>
 
                       {/* Interactive Visual Lens Screen */}
-                      <div className="relative w-full h-[180px] rounded-lg bg-slate-950 border border-red-950/60 overflow-hidden flex items-center justify-center">
+                      <div className="relative w-full h-[180px] rounded-lg bg-slate-950 border border-blue-950/60 overflow-hidden flex items-center justify-center">
                         {/* Grid Scanlines Overlay */}
                         <div className="absolute inset-0 pointer-events-none opacity-[0.08] mix-blend-overlay"
                              style={{ backgroundImage: "linear-gradient(to bottom, #fff 50%, #000 50%)", backgroundSize: "100% 4px" }} />
@@ -682,9 +691,19 @@ export default function PublicAlarmsPage() {
                                 {verificationResult.satellite_verification.over_water ? "Open Water Sector" : "Canopy Sector"}
                               </span>
                             </div>
-                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full border border-red-500 bg-red-500/30 flex items-center justify-center">
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full border border-cyan-500 bg-cyan-500/30 flex items-center justify-center">
+                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
                             </div>
+                            {/* Opaque cloud deck simulation showing cloud penetrator contrast */}
+                            {verificationResult.satellite_verification.cloud_cover_percent > 30 && (
+                              <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-4 text-center z-20">
+                                <CloudOff className="w-7 h-7 text-slate-500 mb-1.5 animate-pulse" />
+                                <span className="text-[10px] text-red-400 font-bold uppercase tracking-wider">⚠️ OPTICAL SENSOR BLOCKED</span>
+                                <span className="text-[8px] text-slate-400 font-sans max-w-[220px] leading-relaxed mt-1">
+                                  Thick storm cloud deck ({verificationResult.satellite_verification.cloud_cover_percent}%) blocking optical wavelengths. Switch to SAR Radar.
+                                </span>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -698,28 +717,28 @@ export default function PublicAlarmsPage() {
                                 <div className="absolute -left-12 -top-12 w-28 h-28 rounded-full bg-red-600/10 blur-xl animate-pulse" />
                                 <div className="absolute -left-8 -top-8 w-20 h-20 rounded-full bg-orange-500/20 blur-lg animate-ping" />
                                 <div className="absolute -left-4 -top-4 w-12 h-12 rounded-full bg-yellow-400/30 blur-md" />
-                                <div className="w-4 h-4 rounded-full bg-white border border-red-500 shadow-[0_0_12px_#ef4444] relative z-10" />
+                                <div className="w-4 h-4 rounded-full bg-white border border-cyan-500 shadow-[0_0_12px_#06b6d4] relative z-10" />
                               </div>
                             ) : (
                               <span className="text-[10px] text-slate-500 font-bold uppercase">NO THERMAL HOTSPOT RECORDED</span>
                             )}
                             
                             {/* Overlay data ticker */}
-                            <div className="absolute bottom-2 left-3 text-[9px] text-red-400 flex items-center gap-1.5 font-bold uppercase">
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+                            <div className="absolute bottom-2 left-3 text-[9px] text-cyan-400 flex items-center gap-1.5 font-bold uppercase">
+                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
                               TH_ANOMALY: +{verificationResult.satellite_verification.thermal_infrared.temp_anomaly_celsius}°C
                             </div>
                           </div>
                         )}
 
                         {satelliteBand === "spectral" && (
-                          <div className="w-full h-full flex flex-col justify-center items-center text-center relative p-6 bg-[#0c0505]">
-                            <div className="absolute inset-0 opacity-40 bg-[radial-gradient(#ef4444_1px,transparent_1px)]" style={{ backgroundSize: '16px 16px' }} />
+                          <div className="w-full h-full flex flex-col justify-center items-center text-center relative p-6 bg-[#020617]">
+                            <div className="absolute inset-0 opacity-25 bg-[radial-gradient(#06b6d4_1px,transparent_1px)]" style={{ backgroundSize: '16px 16px' }} />
                             
                             {/* False-color landscape features */}
                             <div className="w-full h-full absolute inset-0 flex items-center justify-center opacity-30">
                               <div className={`w-32 h-32 rounded-full filter blur-xl ${
-                                verificationResult.satellite_verification.over_water ? "bg-blue-600" : "bg-red-600"
+                                verificationResult.satellite_verification.over_water ? "bg-blue-600" : "bg-cyan-600/40"
                               }`} />
                             </div>
 
@@ -729,7 +748,7 @@ export default function PublicAlarmsPage() {
                                 <div className={`w-6 h-6 rounded-full border border-white bg-slate-950 flex items-center justify-center shadow-lg`}>
                                   <span className="w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse" />
                                 </div>
-                                <span className="text-[9px] text-slate-300 font-bold uppercase px-1.5 py-0.5 rounded bg-slate-950/80 border border-red-950/60 leading-none">
+                                <span className="text-[9px] text-slate-300 font-bold uppercase px-1.5 py-0.5 rounded bg-slate-950/80 border border-blue-950/60 leading-none">
                                   {verificationResult.satellite_verification.over_water ? "OIL_SLICK_FOOTPRINT" : "CANOPY_DISRUPTION"}
                                 </span>
                               </div>
@@ -739,8 +758,79 @@ export default function PublicAlarmsPage() {
                           </div>
                         )}
 
+                        {satelliteBand === "radar" && (
+                          <div className="w-full h-full flex flex-col justify-center items-center text-center relative p-6 bg-[#010409]">
+                            {/* Concentric radar lines */}
+                            <svg className="absolute inset-0 w-full h-full opacity-35" viewBox="0 0 400 180">
+                              <circle cx="200" cy="90" r="30" fill="none" stroke="#06b6d4" strokeWidth="0.5" strokeDasharray="2,2" />
+                              <circle cx="200" cy="90" r="65" fill="none" stroke="#06b6d4" strokeWidth="0.5" />
+                              <circle cx="200" cy="90" r="100" fill="none" stroke="#06b6d4" strokeWidth="0.5" strokeDasharray="4,2" />
+                              <line x1="200" y1="0" x2="200" y2="180" stroke="#06b6d4" strokeWidth="0.5" />
+                              <line x1="0" y1="90" x2="400" y2="90" stroke="#06b6d4" strokeWidth="0.5" />
+                            </svg>
+
+                            {/* Rotating radar sweep beam */}
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[220px] h-[220px] pointer-events-none z-10">
+                              <div className="w-full h-full rounded-full border border-cyan-500/10 relative overflow-hidden"
+                                   style={{ 
+                                     background: 'conic-gradient(from 0deg, rgba(6, 182, 212, 0.15) 0deg, rgba(6, 182, 212, 0) 90deg)',
+                                     animation: 'spin 6s linear infinite'
+                                   }}>
+                                <div className="absolute top-0 left-1/2 w-[1.5px] h-1/2 bg-cyan-400 shadow-[0_0_8px_#22d3ee]" />
+                              </div>
+                            </div>
+
+                            {/* Anomaly backscatter signatures */}
+                            {verificationResult.satellite_verification.sentinel1_sar && 
+                             verificationResult.satellite_verification.sentinel1_sar.backscatter_anomaly !== "NONE" ? (
+                              <div className="relative z-10 space-y-2">
+                                <div className="flex justify-center items-center gap-3">
+                                  {/* Metallic fuselage double-bounce corner reflector target */}
+                                  <div className="relative">
+                                    <div className="absolute -inset-2.5 rounded bg-cyan-400/20 blur-md animate-pulse" />
+                                    <div className="relative w-8 h-8 rounded border border-cyan-400 bg-slate-950 flex flex-col items-center justify-center shadow-[0_0_12px_rgba(6,182,212,0.45)]">
+                                      <Zap className="w-4 h-4 text-cyan-400 animate-bounce" />
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Wave-damped oil slick target (darker return) */}
+                                  {verificationResult.satellite_verification.sentinel1_sar.oil_slick_damping !== "NONE" && (
+                                    <div className="relative">
+                                      <div className="absolute -inset-2 rounded bg-blue-950/40 blur-md animate-pulse" />
+                                      <div className="relative w-8 h-8 rounded border border-blue-950 bg-[#020617]/90 flex flex-col items-center justify-center">
+                                        <Droplets className="w-4 h-4 text-blue-400" />
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="space-y-1 select-none">
+                                  <span className="text-[9px] text-cyan-400 font-bold uppercase px-1.5 py-0.5 rounded bg-slate-950/90 border border-cyan-950/60 leading-none block mx-auto w-max">
+                                    METALLIC RETURN CONFIRMED: {verificationResult.satellite_verification.sentinel1_sar.surface_roughness_db} dB
+                                  </span>
+                                  <span className="text-[7.5px] text-slate-400 font-sans block max-w-[240px] leading-normal">
+                                    Microwave active pulses penetrated storm clouds, mapping a localized high-contrast wreckage footprint.
+                                  </span>
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-[10px] text-slate-500 font-bold uppercase z-10">NO ACTIVE RADAR ANOMALIES DETECTED</span>
+                            )}
+
+                            {/* Floating scan tickers */}
+                            <div className="absolute bottom-2 left-3 text-[9px] text-cyan-400 flex items-center gap-1.5 font-bold uppercase">
+                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                              PENETRATION: 100% (SAR ACTIVE)
+                            </div>
+                            
+                            <div className="absolute bottom-2 right-3 text-[7.5px] text-slate-400 font-mono">
+                              VV/VH DUAL-POL
+                            </div>
+                          </div>
+                        )}
+
                         {/* Top-right satellite HUD compass */}
-                        <div className="absolute top-2.5 right-3 text-[9px] text-slate-400 bg-slate-950/80 px-2 py-0.5 rounded border border-red-950/30 flex items-center gap-1 font-bold uppercase select-none">
+                        <div className="absolute top-2.5 right-3 text-[9px] text-slate-400 bg-slate-950/80 px-2 py-0.5 rounded border border-blue-950/30 flex items-center gap-1 font-bold uppercase select-none">
                           <Compass className="w-3 h-3 text-slate-500" />
                           AZIMUTH: {verificationResult.satellite_verification.orbit_track_angle}°
                         </div>
@@ -748,28 +838,73 @@ export default function PublicAlarmsPage() {
 
                       {/* Satellite Orbital Pass Details */}
                       <div className="grid grid-cols-2 gap-4 text-xs select-none">
-                        <div className="bg-[#120202]/30 p-3 rounded-lg border border-red-950/40 space-y-1 text-slate-300">
+                        <div className="bg-[#020617]/30 p-3 rounded-lg border border-blue-950/40 space-y-1 text-slate-300">
                           <div className="flex justify-between">
                             <span className="text-slate-500">OBSERVER:</span>
-                            <span className="text-white font-bold">{verificationResult.satellite_verification.satellite_name}</span>
+                            <span className="text-white font-bold">
+                              {tleData ? tleData.name : (satelliteBand === "radar" ? "SENTINEL-1A" : "SENTINEL-2A")}
+                            </span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-500">CLOUD COVER:</span>
-                            <span className="text-white font-bold">{verificationResult.satellite_verification.cloud_cover_percent}%</span>
+                            <span className="text-white font-bold">
+                              {satelliteBand === "radar" ? "0.0% (SAR ACTIVE)" : `${verificationResult.satellite_verification.cloud_cover_percent}%`}
+                            </span>
                           </div>
+                          {tleData && (
+                            <>
+                              <div className="flex justify-between text-[9px] text-slate-400">
+                                <span>PERIOD:</span>
+                                <span className="text-cyan-400 font-bold">{tleData.parameters.orbitalPeriodMinutes} min</span>
+                              </div>
+                              <div className="flex justify-between text-[9px] text-slate-400">
+                                <span>ALTITUDE:</span>
+                                <span className="text-cyan-400 font-bold">{tleData.parameters.approxAltitudeKm} km</span>
+                              </div>
+                            </>
+                          )}
                         </div>
-                        <div className="bg-[#120202]/30 p-3 rounded-lg border border-red-950/40 space-y-1 text-slate-300">
+                        <div className="bg-[#020617]/30 p-3 rounded-lg border border-blue-950/40 space-y-1 text-slate-300">
                           <div className="flex justify-between">
                             <span className="text-slate-500">LAST PASS:</span>
-                            <span className="text-white truncate font-bold">{verificationResult.satellite_verification.last_pass_utc}</span>
+                            <span className="text-white truncate font-bold" title={tleData ? new Date(tleData.date).toUTCString() : verificationResult.satellite_verification.last_pass_utc}>
+                              {tleData ? new Date(tleData.date).toLocaleDateString() : verificationResult.satellite_verification.last_pass_utc}
+                            </span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-500">BAND CHECK:</span>
                             <span className={!verificationResult.verification.isFalseAlarm ? "text-green-400 font-bold animate-pulse" : "text-slate-400"}>
-                              {!verificationResult.verification.isFalseAlarm ? "ANOMALY_CONFIRMED" : "NOMINAL"}
+                              {satelliteBand === "radar" 
+                                ? (!verificationResult.verification.isFalseAlarm ? "C-BAND BACKSCATTER" : "NOMINAL")
+                                : (!verificationResult.verification.isFalseAlarm ? "ANOMALY_CONFIRMED" : "NOMINAL")}
                             </span>
                           </div>
+                          {tleData && (
+                            <>
+                              <div className="flex justify-between text-[9px] text-slate-400">
+                                <span>INCLINATION:</span>
+                                <span className="text-cyan-400 font-bold">{tleData.parameters.inclination}°</span>
+                              </div>
+                              <div className="flex justify-between text-[9px] text-slate-400">
+                                <span>NORAD ID:</span>
+                                <span className="text-cyan-400 font-bold">#{tleData.satelliteId}</span>
+                              </div>
+                            </>
+                          )}
                         </div>
+
+                        {/* Live TLE API Data panel showing raw coefficients */}
+                        {tleData && (
+                          <div className="col-span-2 bg-[#010409]/90 p-3 rounded-lg border border-cyan-500/20 font-mono text-[9px] leading-relaxed text-cyan-400 select-all shadow-inner relative overflow-hidden crt-screen">
+                            <div className="absolute top-0 right-0 w-16 h-16 bg-cyan-500/5 rounded-full blur-lg pointer-events-none" />
+                            <div className="text-[8px] text-slate-500 font-bold border-b border-cyan-950/40 pb-1 mb-1.5 flex justify-between select-none">
+                              <span>🛰️ LIVE SATELLITE ORBITAL TLE CORRELATION</span>
+                              <span>NORAD #{tleData.satelliteId}</span>
+                            </div>
+                            <div className="whitespace-pre overflow-x-auto text-glow selection:bg-cyan-500/30 selection:text-cyan-100">{tleData.line1}</div>
+                            <div className="whitespace-pre overflow-x-auto text-glow selection:bg-cyan-500/30 selection:text-cyan-100">{tleData.line2}</div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
